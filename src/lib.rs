@@ -62,7 +62,6 @@
     rust_2018_idioms
 )]
 
-extern crate alloc;
 #[cfg(test)]
 extern crate std;
 
