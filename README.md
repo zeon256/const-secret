@@ -2,7 +2,9 @@
 
 A compile-time constant XOR encryption library for Rust with pluggable drop strategies.
 
-Rahsia encrypts secrets at compile-time using XOR with a compile-time-constant key. The plaintext never appears in the final binary—only the XOR-encrypted bytes are embedded. Upon dereferencing, the encrypted buffer is decrypted in-place. Different drop strategies control what happens to the decrypted buffer when the value is dropped.
+## Motivation
+
+A lot of the static or const string libraries make use of heavy macros which I don't like lol.
 
 ## Features
 
