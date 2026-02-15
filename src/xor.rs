@@ -100,7 +100,11 @@ mod tests {
         xor::Xor,
         Aligned16, Aligned8, ByteArray, StringLiteral,
     };
-    use core::mem::size_of;
+    use alloc::vec;
+    use alloc::vec::Vec;
+    use core::{mem::size_of, sync::atomic::AtomicUsize};
+    use std::sync::Arc;
+    use std::thread;
 
     #[test]
     fn test_size() {
@@ -210,5 +214,144 @@ mod tests {
         let second: &[u8; 5] = &*encrypted;
         assert_eq!(first, b"hello");
         assert_eq!(second, b"hello");
+    }
+
+    #[test]
+    fn test_encrypted_is_sync() {
+        const fn assert_sync<T: Sync>() {}
+        const fn check() {
+            assert_sync::<Encrypted<Xor<0xAA, Zeroize>, ByteArray, 5>>();
+            assert_sync::<Encrypted<Xor<0xBB, ReEncrypt<0xBB>>, StringLiteral, 5>>();
+            assert_sync::<Encrypted<Xor<0xCC, NoOp>, ByteArray, 8>>();
+        }
+    }
+
+    #[test]
+    fn test_concurrent_deref_same_value() {
+        const SHARED: Encrypted<Xor<0xAA, Zeroize>, StringLiteral, 5> =
+            Encrypted::<Xor<0xAA, Zeroize>, StringLiteral, 5>::new(*b"hello");
+
+        let shared = Arc::new(SHARED);
+        let mut handles: Vec<thread::JoinHandle<()>> = vec![];
+
+        for _ in 0..10 {
+            let shared_clone = Arc::clone(&shared);
+            let handle = thread::spawn(move || {
+                let decrypted: &str = &*shared_clone;
+                assert_eq!(decrypted, "hello");
+            });
+            handles.push(handle);
+        }
+
+        for handle in handles {
+            handle.join().unwrap();
+        }
+    }
+
+    #[test]
+    fn test_concurrent_deref_bytearray() {
+        const SHARED: Encrypted<Xor<0xFF, Zeroize>, ByteArray, 4> =
+            Encrypted::<Xor<0xFF, Zeroize>, ByteArray, 4>::new([1, 2, 3, 4]);
+
+        let shared = Arc::new(SHARED);
+        let mut handles: Vec<thread::JoinHandle<()>> = vec![];
+
+        for _ in 0..20 {
+            let shared_clone = Arc::clone(&shared);
+            let handle = thread::spawn(move || {
+                let decrypted: &[u8; 4] = &*shared_clone;
+                assert_eq!(decrypted, &[1, 2, 3, 4]);
+            });
+            handles.push(handle);
+        }
+
+        for handle in handles {
+            handle.join().unwrap();
+        }
+    }
+
+    #[test]
+    fn test_concurrent_deref_reencrypt() {
+        const SHARED: Encrypted<Xor<0xBB, ReEncrypt<0xBB>>, StringLiteral, 6> =
+            Encrypted::<Xor<0xBB, ReEncrypt<0xBB>>, StringLiteral, 6>::new(*b"secret");
+
+        let shared = Arc::new(SHARED);
+        let mut handles: Vec<thread::JoinHandle<()>> = vec![];
+
+        for _ in 0..15 {
+            let shared_clone = Arc::clone(&shared);
+            let handle = thread::spawn(move || {
+                let decrypted: &str = &*shared_clone;
+                assert_eq!(decrypted, "secret");
+            });
+            handles.push(handle);
+        }
+
+        for handle in handles {
+            handle.join().unwrap();
+        }
+    }
+
+    #[test]
+    fn test_concurrent_deref_race_condition() {
+        const SHARED: Encrypted<Xor<0x42, Zeroize>, StringLiteral, 8> =
+            Encrypted::<Xor<0x42, Zeroize>, StringLiteral, 8>::new(*b"racetest");
+
+        let shared = Arc::new(SHARED);
+        let results = Arc::new(AtomicUsize::new(0));
+        let mut handles: Vec<thread::JoinHandle<()>> = vec![];
+
+        for _ in 0..50 {
+            let shared_clone = Arc::clone(&shared);
+            let results_clone = Arc::clone(&results);
+            let handle = thread::spawn(move || {
+                let decrypted: &str = &*shared_clone;
+                if decrypted == "racetest" {
+                    results_clone.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+                }
+            });
+            handles.push(handle);
+        }
+
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        let success_count = results.load(core::sync::atomic::Ordering::Relaxed);
+        assert_eq!(success_count, 50, "all threads should see correct plaintext");
+    }
+
+    #[test]
+    fn test_concurrent_multiple_values() {
+        const SECRET1: Encrypted<Xor<0xAA, Zeroize>, StringLiteral, 5> =
+            Encrypted::<Xor<0xAA, Zeroize>, StringLiteral, 5>::new(*b"hello");
+        const SECRET2: Encrypted<Xor<0xFF, Zeroize>, ByteArray, 4> =
+            Encrypted::<Xor<0xFF, Zeroize>, ByteArray, 4>::new([1, 2, 3, 4]);
+
+        let secret1 = Arc::new(SECRET1);
+        let secret2 = Arc::new(SECRET2);
+        let mut handles: Vec<thread::JoinHandle<()>> = vec![];
+
+        for i in 0..20 {
+            if i % 2 == 0 {
+                let secret_clone = Arc::clone(&secret1);
+                let handle = thread::spawn(move || {
+                    let decrypted: &str = &*secret_clone;
+                    assert_eq!(decrypted, "hello");
+                });
+                handles.push(handle);
+            } else {
+                let secret_clone = Arc::clone(&secret2);
+                let handle = thread::spawn(move || {
+                    let decrypted: &[u8; 4] = &*secret_clone;
+                    assert_eq!(decrypted, &[1, 2, 3, 4]);
+                });
+                handles.push(handle);
+            }
+        }
+
+        for handle in handles {
+            handle.join().unwrap();
+        }
     }
 }
