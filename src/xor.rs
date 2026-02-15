@@ -1,8 +1,11 @@
-use core::{cell::UnsafeCell, marker::PhantomData, sync::atomic::AtomicBool};
+use core::{
+    cell::UnsafeCell, marker::PhantomData, ops::Deref, sync::atomic::AtomicBool,
+    sync::atomic::Ordering,
+};
 
 use crate::{
-    Algorithm, Encrypted, GetMutBuffer,
-    drop_strategy::{DropStrategy, NoOp, Zeroize},
+    drop_strategy::{DropStrategy, Zeroize},
+    Algorithm, ByteArray, Encrypted, StringLiteral,
 };
 
 pub struct ReEncrypt<const KEY: u8>;
@@ -15,93 +18,17 @@ impl<const KEY: u8> DropStrategy for ReEncrypt<KEY> {
     }
 }
 
-impl<const KEY: u8> Algorithm for Xor<KEY, Zeroize> {
-    type Buffer<const N: usize> = [u8; N];
-    type IsDecrypted = ();
-    type Drop = Zeroize;
-}
-
-impl<const KEY: u8> Algorithm for Xor<KEY, NoOp> {
-    type Buffer<const N: usize> = [u8; N];
-    type IsDecrypted = ();
-    type Drop = NoOp;
-}
-
-impl<const KEY: u8> Algorithm for Xor<KEY, ReEncrypt<KEY>> {
-    type Buffer<const N: usize> = UnsafeCell<[u8; N]>;
-    type IsDecrypted = AtomicBool;
-    type Drop = ReEncrypt<KEY>;
-}
-
-impl<const KEY: u8, D, const N: usize> GetMutBuffer for Encrypted<Xor<KEY, Zeroize>, D, N> {
-    fn buffer_mut(&mut self) -> &mut [u8] {
-        &mut self.buffer
-    }
-}
-
-impl<const KEY: u8, D, const N: usize> GetMutBuffer for Encrypted<Xor<KEY, NoOp>, D, N> {
-    fn buffer_mut(&mut self) -> &mut [u8] {
-        &mut self.buffer
-    }
-}
-
-impl<const KEY: u8, D, const N: usize> GetMutBuffer for Encrypted<Xor<KEY, ReEncrypt<KEY>>, D, N> {
-    fn buffer_mut(&mut self) -> &mut [u8] {
-        // UnsafeCell is required for interior mutability during re-encryption.
-        // SAFETY: The buffer is always initialized and never moved or dropped.
-        unsafe { &mut *self.buffer.get() }
-    }
-}
-
-/// An algorithm that performs XOR encryption and decryption
-/// This algorithm is generic over destructor.
-///
-/// Sometimes you want the destructor to zero out while sometimes you want
-/// it to be no-op or even encrypt the data back.
-/// Prima facie, zeroize is the safest. However, sometimes you may want to
-/// encrypt the data back which may expose information about the key because of he compiled
-/// assembly. However, due to optimizations, it can be harder to see what the key is because
-/// this algorithm is generic over KEYs. So you can have per buffer encryption which
-/// may yield different assembly instructions depending on the key.
+/// An algorithm that performs XOR encryption and decryption.
+/// This algorithm is generic over drop strategy.
 pub struct Xor<const KEY: u8, D: DropStrategy = Zeroize>(PhantomData<D>);
 
-impl<const KEY: u8, D, const N: usize> Encrypted<Xor<KEY, Zeroize>, D, N> {
-    pub const fn new(mut buffer: [u8; N]) -> Self {
-        // since we cant use for loops in const context we must use a while loop
-        let mut i = 0;
-        while i < N {
-            buffer[i] ^= KEY;
-            i += 1;
-        }
-
-        Encrypted {
-            buffer,
-            is_decrypted: (),
-            _phantom: PhantomData,
-        }
-    }
+impl<const KEY: u8, D: DropStrategy> Algorithm for Xor<KEY, D> {
+    type Drop = D;
 }
 
-impl<const KEY: u8, D, const N: usize> Encrypted<Xor<KEY, NoOp>, D, N> {
+impl<const KEY: u8, D: DropStrategy, M, const N: usize> Encrypted<Xor<KEY, D>, M, N> {
     pub const fn new(mut buffer: [u8; N]) -> Self {
-        // since we cant use for loops in const context we must use a while loop
-        let mut i = 0;
-        while i < N {
-            buffer[i] ^= KEY;
-            i += 1;
-        }
-
-        Encrypted {
-            buffer,
-            is_decrypted: (),
-            _phantom: PhantomData,
-        }
-    }
-}
-
-impl<const KEY: u8, D, const N: usize> Encrypted<Xor<KEY, ReEncrypt<KEY>>, D, N> {
-    pub const fn new(mut buffer: [u8; N]) -> Self {
-        // since we cant use for loops in const context we must use a while loop
+        // We use a while loop because const contexts do not allow for-loops.
         let mut i = 0;
         while i < N {
             buffer[i] ^= KEY;
@@ -116,23 +43,172 @@ impl<const KEY: u8, D, const N: usize> Encrypted<Xor<KEY, ReEncrypt<KEY>>, D, N>
     }
 }
 
+impl<const KEY: u8, D: DropStrategy, const N: usize> Deref
+    for Encrypted<Xor<KEY, D>, ByteArray, N>
+{
+    type Target = [u8; N];
+
+    fn deref(&self) -> &Self::Target {
+        if !self.is_decrypted.load(Ordering::Acquire)
+            && self
+                .is_decrypted
+                .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+        {
+            // SAFETY: `buffer` is always initialized and points to valid `[u8; N]`.
+            let data = unsafe { &mut *self.buffer.get() };
+            for byte in data.iter_mut() {
+                *byte ^= KEY;
+            }
+        }
+
+        // SAFETY: `buffer` is initialized and lives as long as `self`.
+        unsafe { &*self.buffer.get() }
+    }
+}
+
+impl<const KEY: u8, D: DropStrategy, const N: usize> Deref
+    for Encrypted<Xor<KEY, D>, StringLiteral, N>
+{
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        if !self.is_decrypted.load(Ordering::Acquire)
+            && self
+                .is_decrypted
+                .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+        {
+            // SAFETY: `buffer` is always initialized and points to valid `[u8; N]`.
+            let data = unsafe { &mut *self.buffer.get() };
+            for byte in data.iter_mut() {
+                *byte ^= KEY;
+            }
+        }
+
+        // SAFETY: `buffer` is initialized and lives as long as `self`.
+        let bytes = unsafe { &*self.buffer.get() };
+        core::str::from_utf8(bytes).expect("invalid UTF-8 in decrypted StringLiteral")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Aligned8, Aligned16, ByteArray, drop_strategy::Zeroize, xor::Xor};
+    use crate::{
+        drop_strategy::{NoOp, Zeroize},
+        xor::Xor,
+        Aligned16, Aligned8, ByteArray, StringLiteral,
+    };
     use core::mem::size_of;
 
     #[test]
     fn test_size() {
-        // these are already aligned
-        assert_eq!(16, size_of::<Encrypted<Xor<0xAA, Zeroize>, ByteArray, 16>>());
-        assert_eq!(16, size_of::<Encrypted<Xor<0xAA, NoOp>, ByteArray, 16>>());
-        // alright homies, atomicbool has alignment of 1
-        // so in this case it will be 17 bytes weird innit?
+        assert_eq!(17, size_of::<Encrypted<Xor<0xAA, Zeroize>, ByteArray, 16>>());
+        assert_eq!(17, size_of::<Encrypted<Xor<0xAA, NoOp>, ByteArray, 16>>());
         assert_eq!(17, size_of::<Encrypted<Xor<0xAA, ReEncrypt<0xAA>>, ByteArray, 16>>());
 
-        // alignment tests
+        // Alignment tests.
         assert_eq!(24, size_of::<Aligned8<Encrypted<Xor<0xAA, ReEncrypt<0xAA>>, ByteArray, 16>>>());
-        assert_eq!(32, size_of::<Aligned16<Encrypted<Xor<0xAA, ReEncrypt<0xAA>>, ByteArray, 16>>>());
+        assert_eq!(
+            32,
+            size_of::<Aligned16<Encrypted<Xor<0xAA, ReEncrypt<0xAA>>, ByteArray, 16>>>()
+        );
+    }
+
+    const CONST_ENCRYPTED: Encrypted<Xor<0xAA, Zeroize>, ByteArray, 5> =
+        Encrypted::<Xor<0xAA, Zeroize>, ByteArray, 5>::new(*b"hello");
+
+    const CONST_ENCRYPTED_STR: Encrypted<Xor<0xFF, Zeroize>, StringLiteral, 3> =
+        Encrypted::<Xor<0xFF, Zeroize>, StringLiteral, 3>::new(*b"abc");
+
+    const CONST_ENCRYPTED_SINGLE: Encrypted<Xor<0xFF, Zeroize>, ByteArray, 1> =
+        Encrypted::<Xor<0xFF, Zeroize>, ByteArray, 1>::new([42]);
+
+    const CONST_ENCRYPTED_ZEROS: Encrypted<Xor<0xAA, Zeroize>, ByteArray, 4> =
+        Encrypted::<Xor<0xAA, Zeroize>, ByteArray, 4>::new([0, 0, 0, 0]);
+
+    const CONST_ENCRYPTED_NOOP_KEY: Encrypted<Xor<0x00, Zeroize>, ByteArray, 3> =
+        Encrypted::<Xor<0x00, Zeroize>, ByteArray, 3>::new(*b"abc");
+
+    #[test]
+    fn test_new_in_const_context() {
+        let plain: &[u8; 5] = &*CONST_ENCRYPTED;
+        assert_eq!(plain, b"hello");
+    }
+
+    #[test]
+    fn test_buffer_is_encrypted_before_deref() {
+        // Each use of the const produces a fresh copy, so this instance is never deref'd.
+        let encrypted = CONST_ENCRYPTED;
+
+        // Before deref, the raw buffer should hold plaintext XOR'd with the key.
+        let raw = unsafe { &*encrypted.buffer.get() };
+        let expected = [b'h' ^ 0xAA, b'e' ^ 0xAA, b'l' ^ 0xAA, b'l' ^ 0xAA, b'o' ^ 0xAA];
+        assert_eq!(raw, &expected, "buffer should be XOR-encrypted before deref");
+        assert_ne!(raw, b"hello", "buffer must NOT be plaintext before deref");
+    }
+
+    #[test]
+    fn test_string_buffer_is_encrypted_before_deref() {
+        let encrypted = CONST_ENCRYPTED_STR;
+
+        let raw = unsafe { &*encrypted.buffer.get() };
+        let expected = [b'a' ^ 0xFF, b'b' ^ 0xFF, b'c' ^ 0xFF];
+        assert_eq!(raw, &expected, "string buffer should be XOR-encrypted before deref");
+        assert_ne!(raw, b"abc");
+    }
+
+    #[test]
+    fn test_bytearray_deref_decrypts() {
+        let encrypted = CONST_ENCRYPTED;
+
+        // Deref should decrypt and return the original plaintext.
+        let plain: &[u8; 5] = &*encrypted;
+        assert_eq!(plain, b"hello");
+    }
+
+    #[test]
+    fn test_bytearray_deref_single_byte() {
+        let pre_deref = CONST_ENCRYPTED_SINGLE;
+        let raw = unsafe { &*pre_deref.buffer.get() };
+        assert_eq!(raw, &[42 ^ 0xFF]);
+
+        let encrypted = CONST_ENCRYPTED_SINGLE;
+        let plain: &[u8; 1] = &*encrypted;
+        assert_eq!(plain, &[42]);
+    }
+
+    #[test]
+    fn test_bytearray_deref_all_zeros() {
+        let pre_deref = CONST_ENCRYPTED_ZEROS;
+        let raw = unsafe { &*pre_deref.buffer.get() };
+        assert_eq!(raw, &[0xAA, 0xAA, 0xAA, 0xAA]);
+
+        let encrypted = CONST_ENCRYPTED_ZEROS;
+        let plain: &[u8; 4] = &*encrypted;
+        assert_eq!(plain, &[0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn test_bytearray_deref_key_zero_is_identity() {
+        // A key of 0x00 means XOR is a no-op; buffer equals plaintext.
+        let pre_deref = CONST_ENCRYPTED_NOOP_KEY;
+        let raw = unsafe { &*pre_deref.buffer.get() };
+        assert_eq!(raw, b"abc", "key 0x00 should leave buffer unchanged");
+
+        let encrypted = CONST_ENCRYPTED_NOOP_KEY;
+        let plain: &[u8; 3] = &*encrypted;
+        assert_eq!(plain, b"abc");
+    }
+
+    #[test]
+    fn test_bytearray_multiple_derefs_are_idempotent() {
+        let encrypted = CONST_ENCRYPTED;
+
+        let first: &[u8; 5] = &*encrypted;
+        let second: &[u8; 5] = &*encrypted;
+        assert_eq!(first, b"hello");
+        assert_eq!(second, b"hello");
     }
 }

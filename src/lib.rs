@@ -66,37 +66,26 @@ pub mod drop_strategy;
 pub mod xor;
 
 use crate::drop_strategy::DropStrategy;
-use core::{fmt::Debug, marker::PhantomData};
+use core::{cell::UnsafeCell, marker::PhantomData, sync::atomic::AtomicBool};
 
 pub trait Algorithm {
-    type Buffer<const N: usize>: Debug;
-    type IsDecrypted: Debug;
     type Drop: DropStrategy;
-}
-
-pub trait GetMutBuffer {
-    fn buffer_mut(&mut self) -> &mut [u8];
 }
 
 pub struct StringLiteral;
 pub struct ByteArray;
 
 #[derive(Debug)]
-pub struct Encrypted<A: Algorithm, D, const N: usize>
-where
-    Self: GetMutBuffer,
-{
-    buffer: A::Buffer<N>,
-    is_decrypted: A::IsDecrypted,
-    _phantom: PhantomData<D>,
+pub struct Encrypted<A: Algorithm, M, const N: usize> {
+    buffer: UnsafeCell<[u8; N]>,
+    is_decrypted: AtomicBool,
+    _phantom: PhantomData<(A, M)>,
 }
 
-impl<A: Algorithm, D, const N: usize> Drop for Encrypted<A, D, N>
-where
-    Self: GetMutBuffer,
-{
+impl<A: Algorithm, M, const N: usize> Drop for Encrypted<A, M, N> {
     fn drop(&mut self) {
-        let data_ref = self.buffer_mut();
+        // SAFETY: `buffer` is initialized and exclusively borrowed through `&mut self`.
+        let data_ref = unsafe { &mut *self.buffer.get() };
         A::Drop::drop(data_ref);
     }
 }
