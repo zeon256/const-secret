@@ -1,21 +1,55 @@
-use std::{
-    cell::UnsafeCell,
-    marker::PhantomData,
-    ops::Deref,
-    sync::atomic::{AtomicBool, Ordering},
+use core::{cell::UnsafeCell, marker::PhantomData, sync::atomic::AtomicBool};
+
+use crate::{
+    Algorithm, Encrypted, GetMutBuffer,
+    drop_strategy::{DropStrategy, NoOp, Zeroize},
 };
 
-use crate::{dtor::ZeroizeDtor, AlgorithmDtor, ByteArray, Encrypted};
+pub struct ReEncrypt<const KEY: u8>;
 
-/// Special only for xor encryption
-/// Users might want to use this to xor back the data on drop
-pub struct XorDtor<const KEY: u8>;
-
-impl<const KEY: u8> AlgorithmDtor for XorDtor<KEY> {
-    fn drop<const N: usize>(data_ref: &mut [u8; N]) {
-        for i in 0..N {
-            data_ref[i] ^= KEY;
+impl<const KEY: u8> DropStrategy for ReEncrypt<KEY> {
+    fn drop(data: &mut [u8]) {
+        for byte in data {
+            *byte ^= KEY;
         }
+    }
+}
+
+impl<const KEY: u8> Algorithm for Xor<KEY, Zeroize> {
+    type Buffer<const N: usize> = [u8; N];
+    type IsDecrypted = ();
+    type Drop = Zeroize;
+}
+
+impl<const KEY: u8> Algorithm for Xor<KEY, NoOp> {
+    type Buffer<const N: usize> = [u8; N];
+    type IsDecrypted = ();
+    type Drop = NoOp;
+}
+
+impl<const KEY: u8> Algorithm for Xor<KEY, ReEncrypt<KEY>> {
+    type Buffer<const N: usize> = UnsafeCell<[u8; N]>;
+    type IsDecrypted = AtomicBool;
+    type Drop = ReEncrypt<KEY>;
+}
+
+impl<const KEY: u8, D, const N: usize> GetMutBuffer for Encrypted<Xor<KEY, Zeroize>, D, N> {
+    fn buffer_mut(&mut self) -> &mut [u8] {
+        &mut self.buffer
+    }
+}
+
+impl<const KEY: u8, D, const N: usize> GetMutBuffer for Encrypted<Xor<KEY, NoOp>, D, N> {
+    fn buffer_mut(&mut self) -> &mut [u8] {
+        &mut self.buffer
+    }
+}
+
+impl<const KEY: u8, D, const N: usize> GetMutBuffer for Encrypted<Xor<KEY, ReEncrypt<KEY>>, D, N> {
+    fn buffer_mut(&mut self) -> &mut [u8] {
+        // UnsafeCell is required for interior mutability during re-encryption.
+        // SAFETY: The buffer is always initialized and never moved or dropped.
+        unsafe { &mut *self.buffer.get() }
     }
 }
 
@@ -29,70 +63,76 @@ impl<const KEY: u8> AlgorithmDtor for XorDtor<KEY> {
 /// assembly. However, due to optimizations, it can be harder to see what the key is because
 /// this algorithm is generic over KEYs. So you can have per buffer encryption which
 /// may yield different assembly instructions depending on the key.
-pub struct Xor<const KEY: u8, D: AlgorithmDtor = ZeroizeDtor>(PhantomData<D>);
+pub struct Xor<const KEY: u8, D: DropStrategy = Zeroize>(PhantomData<D>);
 
-/// XOR algorithm that XORs back on drop using the same key.
-/// This ensures the encryption key and drop key are always in sync.
-pub type XorSymmetric<const KEY: u8> = Xor<KEY, XorDtor<KEY>>;
+impl<const KEY: u8, D, const N: usize> Encrypted<Xor<KEY, Zeroize>, D, N> {
+    pub const fn new(mut buffer: [u8; N]) -> Self {
+        // since we cant use for loops in const context we must use a while loop
+        let mut i = 0;
+        while i < N {
+            buffer[i] ^= KEY;
+            i += 1;
+        }
 
-impl<const KEY: u8, D: AlgorithmDtor> AlgorithmDtor for Xor<KEY, D> {
-    fn drop<const N: usize>(data_ref: &mut [u8; N]) {
-        D::drop(data_ref);
+        Encrypted {
+            buffer,
+            is_decrypted: (),
+            _phantom: PhantomData,
+        }
     }
 }
 
-impl<const KEY: u8, const N: usize, U, D> Encrypted<Xor<KEY, D>, N, U>
-where
-    D: AlgorithmDtor,
-{
-    pub const fn new(plaintext: [u8; N]) -> Self {
-        let mut encrypted = [0u8; N];
-        // cant use for loops here because it is not stable in const fn
+impl<const KEY: u8, D, const N: usize> Encrypted<Xor<KEY, NoOp>, D, N> {
+    pub const fn new(mut buffer: [u8; N]) -> Self {
+        // since we cant use for loops in const context we must use a while loop
         let mut i = 0;
         while i < N {
-            encrypted[i] = plaintext[i] ^ KEY;
+            buffer[i] ^= KEY;
             i += 1;
         }
-        Self {
-            data: UnsafeCell::new(encrypted),
+
+        Encrypted {
+            buffer,
+            is_decrypted: (),
+            _phantom: PhantomData,
+        }
+    }
+}
+
+impl<const KEY: u8, D, const N: usize> Encrypted<Xor<KEY, ReEncrypt<KEY>>, D, N> {
+    pub const fn new(mut buffer: [u8; N]) -> Self {
+        // since we cant use for loops in const context we must use a while loop
+        let mut i = 0;
+        while i < N {
+            buffer[i] ^= KEY;
+            i += 1;
+        }
+
+        Encrypted {
+            buffer: UnsafeCell::new(buffer),
             is_decrypted: AtomicBool::new(false),
             _phantom: PhantomData,
         }
     }
-
-    // Private in-place mutate (decrypt or encrypt; same for XOR).
-    pub unsafe fn xor_in_place(&self) {
-        let data_ptr = self.data.get();
-        let mut_buf = unsafe { &mut *data_ptr };
-        for byte in mut_buf.iter_mut() {
-            *byte ^= KEY;
-        }
-    }
 }
 
-impl<const KEY: u8, const N: usize, D: AlgorithmDtor> Deref for Encrypted<Xor<KEY, D>, N, ByteArray> {
-    type Target = [u8];
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{Aligned8, Aligned16, ByteArray, drop_strategy::Zeroize, xor::Xor};
+    use core::mem::size_of;
 
-    fn deref(&self) -> &[u8] {
-        // Fast path: already decrypted
-        if self.is_decrypted.load(Ordering::Acquire) {
-            return unsafe { &*self.data.get() };
-        }
+    #[test]
+    fn test_size() {
+        // these are already aligned
+        assert_eq!(16, size_of::<Encrypted<Xor<0xAA, Zeroize>, ByteArray, 16>>());
+        assert_eq!(16, size_of::<Encrypted<Xor<0xAA, NoOp>, ByteArray, 16>>());
+        // alright homies, atomicbool has alignment of 1
+        // so in this case it will be 17 bytes weird innit?
+        assert_eq!(17, size_of::<Encrypted<Xor<0xAA, ReEncrypt<0xAA>>, ByteArray, 16>>());
 
-        // Try to claim the decryption
-        if self
-            .is_decrypted
-            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .is_ok()
-        {
-            // We won the race - we decrypt
-            unsafe {
-                self.xor_in_place();
-            }
-        }
-        // else: another thread is decrypting or has decrypted
-        // The Acquire ordering ensures we see their writes
-
-        unsafe { &*self.data.get() }
+        // alignment tests
+        assert_eq!(24, size_of::<Aligned8<Encrypted<Xor<0xAA, ReEncrypt<0xAA>>, ByteArray, 16>>>());
+        assert_eq!(32, size_of::<Aligned16<Encrypted<Xor<0xAA, ReEncrypt<0xAA>>, ByteArray, 16>>>());
     }
 }
