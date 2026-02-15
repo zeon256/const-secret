@@ -62,6 +62,10 @@
     rust_2018_idioms
 )]
 
+extern crate alloc;
+#[cfg(test)]
+extern crate std;
+
 pub mod drop_strategy;
 pub mod xor;
 
@@ -88,6 +92,19 @@ impl<A: Algorithm, M, const N: usize> Drop for Encrypted<A, M, N> {
         let data_ref = unsafe { &mut *self.buffer.get() };
         A::Drop::drop(data_ref);
     }
+}
+
+// SAFETY: `Encrypted` is `Sync` because:
+// 1. The `AtomicBool` ensures only one thread can transition `is_decrypted` from false to true
+//    via `compare_exchange`, providing exclusive access to the XOR mutation.
+// 2. After the first successful deref, `is_decrypted` is true and the buffer never mutates again.
+// 3. Multiple threads can safely read the stable, decrypted buffer concurrently.
+// 4. The buffer is only mutated during initialization (const) and the first deref (once per value).
+unsafe impl<A: Algorithm, M, const N: usize> Sync for Encrypted<A, M, N>
+where
+    A: Sync,
+    M: Sync,
+{
 }
 
 #[repr(align(8))]

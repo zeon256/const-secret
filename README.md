@@ -144,9 +144,16 @@ cargo build --example debug_drop
 cargo run --example debug_drop
 ```
 
+## Thread Safety
+
+The `Encrypted` struct is fully `Sync` and can be safely shared across threads:
+
+- The internal `AtomicBool` ensures only one thread performs the XOR decryption via compare-and-swap.
+- After the first deref, the buffer is immutable and thread-safe for concurrent reads.
+- Multiple threads can safely call `Deref` on the same `Encrypted` value concurrently.
+
 ## Caveats
 
-- **Single-threaded use only**: The `Encrypted` struct is not `Sync` due to `UnsafeCell`. Use per-thread instances or wrap in a synchronization primitive if needed.
 - **XOR is not a cryptographic algorithm**: XOR alone provides obfuscation, not encryption. Use this for compile-time constant storage with security-in-depth layering, not as a standalone encryption scheme.
 - **Memory observability**: Even with `Zeroize` or `ReEncrypt`, a memory-reading attacker (e.g., via cold-boot attack or debugger) can observe the plaintext while the value is in scope and dereferenced.
 
