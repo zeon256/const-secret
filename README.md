@@ -77,9 +77,9 @@ strings target/debug/examples/debug_drop | grep -E "^(hello|world|secret|leaked)
 
 ### Inspect drop strategies with a debugger
 
-The release binary includes SIMD-optimized drop implementations. You can verify the actual XOR operations:
+The release binary includes optimized drop implementations. You can verify the actual XOR operations via `objdump`. The examples below are for **ARM64 (AArch64)**; x86_64 will show different instruction mnemonics but the same underlying logic (XOR operations).
 
-#### Debug build
+#### Debug build (ARM64)
 ```bash
 cargo build --example debug_drop
 objdump -d target/debug/examples/debug_drop | grep -A 20 "ReEncrypt.*drop"
@@ -92,7 +92,7 @@ eor	w8, w8, w10       ; XOR the byte
 strb	w8, [x9]         ; store back
 ```
 
-#### Release build (SIMD-optimized)
+#### Release build (ARM64, SIMD-optimized)
 ```bash
 cargo build --example debug_drop --release
 objdump -d target/release/examples/debug_drop | grep -B 5 -A 5 "movi.4h.*0xbb"
@@ -104,6 +104,8 @@ movi.4h	v1, #0xbb       ; load 0xBB into vector register
 eor.8b	v0, v0, v1      ; XOR 4 bytes at once
 eor	w8, w8, #0xbbbbbbbb ; XOR remaining byte
 ```
+
+On x86_64, you'll see `mov`, `xor`, and `movzx` instructions instead, but the same drop strategy logic applies.
 
 ### Run under debugger
 
