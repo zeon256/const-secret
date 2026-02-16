@@ -1,7 +1,7 @@
 use const_secret::{
+    ByteArray, Encrypted, StringLiteral,
     drop_strategy::{NoOp, Zeroize},
     xor::{ReEncrypt, Xor},
-    ByteArray, Encrypted, StringLiteral,
 };
 
 const HELLO_ZEROIZE: Encrypted<Xor<0xAA, Zeroize>, StringLiteral, 5> =
@@ -9,6 +9,12 @@ const HELLO_ZEROIZE: Encrypted<Xor<0xAA, Zeroize>, StringLiteral, 5> =
 
 const WORLD_REENCRYPT: Encrypted<Xor<0xBB, ReEncrypt<0xBB>>, StringLiteral, 5> =
     Encrypted::<Xor<0xBB, ReEncrypt<0xBB>>, StringLiteral, 5>::new(*b"world");
+
+// Longer payload to encourage vectorized/SIMD XOR codegen in optimized builds.
+const WORLD_REENCRYPT_LONG: Encrypted<Xor<0xBB, ReEncrypt<0xBB>>, StringLiteral, 64> =
+    Encrypted::<Xor<0xBB, ReEncrypt<0xBB>>, StringLiteral, 64>::new(
+        *b"world-world-world-world-world-world-world-world-world-world-1234",
+    );
 
 const SECRET_NOOP: Encrypted<Xor<0xCC, NoOp>, StringLiteral, 6> =
     Encrypted::<Xor<0xCC, NoOp>, StringLiteral, 6>::new(*b"secret");
@@ -42,6 +48,16 @@ fn main() {
 
         let plain: &str = &*secret;
         eprintln!("[reencrypt] decrypted: {plain:?}");
+    }
+
+    eprintln!();
+
+    {
+        let secret = WORLD_REENCRYPT_LONG;
+        print_addr("reencrypt-long", &secret);
+
+        let plain: &str = &*secret;
+        eprintln!("[reencrypt-long] decrypted: {plain:?}");
     }
 
     eprintln!();

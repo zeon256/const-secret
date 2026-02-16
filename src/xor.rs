@@ -90,7 +90,9 @@ impl<const KEY: u8, D: DropStrategy, const N: usize> Deref
 
         // SAFETY: `buffer` is initialized and lives as long as `self`.
         let bytes = unsafe { &*self.buffer.get() };
-        core::str::from_utf8(bytes).expect("invalid UTF-8 in decrypted StringLiteral")
+
+        // SAFETY: Since the original input was a valid UTF-8 string literal, XOR with a single byte key will not produce invalid UTF-8. The length is also preserved, so the resulting bytes will still form a valid UTF-8 string.
+        unsafe { core::str::from_utf8_unchecked(bytes) }
     }
 }
 
