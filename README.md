@@ -66,11 +66,25 @@ const TEST_DATA: Encrypted<Xor<0xCC, NoOp>, ByteArray, 4> =
     Encrypted::<Xor<0xCC, NoOp>, ByteArray, 4>::new([1, 2, 3, 4]);
 ```
 
-## Verification (Quick Checks)
+## How it works
+
+1. **Compile-time encryption**: `Encrypted::new()` XORs plaintext with key at compile time, storing ciphertext in the binary.
+2. **Lazy decryption**: `Deref` checks an atomic one-time flag:
+   - first successful check sets the flag and XORs ciphertext -> plaintext,
+   - later derefs skip re-XOR and return plaintext directly.
+3. **Drop**: selected `DropStrategy` runs:
+   - `Zeroize`: secure overwrite via `zeroize`,
+   - `ReEncrypt<KEY>`: XOR plaintext back to ciphertext,
+   - `NoOp`: no cleanup.
+
+## Verification
+
+<details>
+<summary>Quick Checks (click to expand)</summary>
 
 ### 1) Verify plaintext is absent from the binary
 
-```rust
+```bash
 cargo build --example debug_drop
 strings target/debug/examples/debug_drop | grep -E "^(hello|world|secret|leaked)$"
 # Expected: no output
@@ -78,7 +92,7 @@ strings target/debug/examples/debug_drop | grep -E "^(hello|world|secret|leaked)
 
 ### 2) Verify release assembly has atomic guard + XOR transforms
 
-```rust
+```bash
 cargo build --example debug_drop --release
 objdump -d target/release/examples/debug_drop | grep -Ei "cmpxchg|xorl|xorb|movaps|xorps|0xaaaaaaaa|0xbbbbbbbb|0xdddddddd|0xeeeeeeee"
 ```
@@ -88,7 +102,10 @@ Expected:
 - scalar XOR for short buffers (`xorl` + `xorb`),
 - SIMD XOR for long buffers (`movaps` + `xorps`) when optimization chooses vectorization.
 
-## Verification (Detailed)
+</details>
+
+<details>
+<summary>Detailed Verification</summary>
 
 ### A. Short payloads: expect scalar XOR (very common)
 
@@ -155,16 +172,7 @@ cargo build --example debug_drop --release --target aarch64-unknown-linux-gnu
 objdump -d target/aarch64-unknown-linux-gnu/release/examples/debug_drop | grep -Ei "ldxr|stxr|cas|eor|0xbb|0xaa|0xdd|0xee"
 ```
 
-## How it works
-
-1. **Compile-time encryption**: `Encrypted::new()` XORs plaintext with key at compile time, storing ciphertext in the binary.
-2. **Lazy decryption**: `Deref` checks an atomic one-time flag:
-   - first successful check sets the flag and XORs ciphertext -> plaintext,
-   - later derefs skip re-XOR and return plaintext directly.
-3. **Drop**: selected `DropStrategy` runs:
-   - `Zeroize`: secure overwrite via `zeroize`,
-   - `ReEncrypt<KEY>`: XOR plaintext back to ciphertext,
-   - `NoOp`: no cleanup.
+</details>
 
 ## Building
 
@@ -190,7 +198,8 @@ cargo run --example debug_drop
 
 This is by design: the goal is to avoid embedding plaintext in static binaries. For stronger protection, combine with stricter runtime controls and defense-in-depth.
 
-## Example: Checking the Binary
+<details>
+<summary>Example: Checking the Binary</summary>
 
 ```bash
 cargo build --example debug_drop
@@ -209,6 +218,8 @@ cargo run --example debug_drop
 cargo build --example debug_drop --release
 objdump -d target/release/examples/debug_drop | grep -Ei "cmpxchg|movaps|xorps|xorl|xorb|0xaaaaaaaa|0xbbbbbbbb|0xdddddddd|0xeeeeeeee"
 ```
+
+</details>
 
 ## License
 
