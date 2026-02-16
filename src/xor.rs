@@ -1,3 +1,46 @@
+//! XOR encryption algorithm implementation.
+//!
+//! This module provides a simple XOR-based encryption algorithm. While not
+//! cryptographically secure, it is fast and suitable for basic obfuscation
+//! of secrets in compiled binaries.
+//!
+//! # Algorithm
+//!
+//! The [`Xor`] algorithm uses a single-byte key that is XOR'd with each
+//! byte of the plaintext. The same operation is used for both encryption
+//! and decryption (XOR is its own inverse).
+//!
+//! # Types
+//!
+//! - [`Xor<KEY, D>`]: The main algorithm type with const generic key and drop strategy
+//! - [`ReEncrypt<KEY>`]: A drop strategy that re-encrypts data on drop
+//!
+//! # Example
+//!
+//! ```rust
+//! use const_secret::{
+//!     Encrypted, StringLiteral,
+//!     drop_strategy::Zeroize,
+//!     xor::{ReEncrypt, Xor},
+//! };
+//!
+//! // Zeroize on drop (default)
+//! const SECRET: Encrypted<Xor<0xAA, Zeroize>, StringLiteral, 5> =
+//!     Encrypted::<Xor<0xAA, Zeroize>, StringLiteral, 5>::new(*b"hello");
+//!
+//! // Re-encrypt on drop
+//! const SECRET2: Encrypted<Xor<0xBB, ReEncrypt<0xBB>>, StringLiteral, 6> =
+//!     Encrypted::<Xor<0xBB, ReEncrypt<0xBB>>, StringLiteral, 6>::new(*b"secret");
+//!
+//! fn main() {
+//!     let s1: &str = &*SECRET;
+//!     assert_eq!(s1, "hello");
+//!     
+//!     let s2: &str = &*SECRET2;
+//!     assert_eq!(s2, "secret");
+//! }
+//! ```
+
 use core::{
     cell::UnsafeCell,
     marker::PhantomData,
@@ -6,14 +49,15 @@ use core::{
 };
 
 use crate::{
-    Algorithm, ByteArray, Encrypted, StringLiteral,
     drop_strategy::{DropStrategy, Zeroize},
+    Algorithm, ByteArray, Encrypted, StringLiteral,
 };
 
 pub struct ReEncrypt<const KEY: u8>;
 
 impl<const KEY: u8> DropStrategy for ReEncrypt<KEY> {
-    fn drop(data: &mut [u8]) {
+    type Extra = ();
+    fn drop(data: &mut [u8], _extra: &()) {
         for byte in data {
             *byte ^= KEY;
         }
@@ -24,11 +68,12 @@ impl<const KEY: u8> DropStrategy for ReEncrypt<KEY> {
 /// This algorithm is generic over drop strategy.
 pub struct Xor<const KEY: u8, D: DropStrategy = Zeroize>(PhantomData<D>);
 
-impl<const KEY: u8, D: DropStrategy> Algorithm for Xor<KEY, D> {
+impl<const KEY: u8, D: DropStrategy<Extra = ()>> Algorithm for Xor<KEY, D> {
     type Drop = D;
+    type Extra = ();
 }
 
-impl<const KEY: u8, D: DropStrategy, M, const N: usize> Encrypted<Xor<KEY, D>, M, N> {
+impl<const KEY: u8, D: DropStrategy<Extra = ()>, M, const N: usize> Encrypted<Xor<KEY, D>, M, N> {
     pub const fn new(mut buffer: [u8; N]) -> Self {
         // We use a while loop because const contexts do not allow for-loops.
         let mut i = 0;
@@ -40,12 +85,13 @@ impl<const KEY: u8, D: DropStrategy, M, const N: usize> Encrypted<Xor<KEY, D>, M
         Encrypted {
             buffer: UnsafeCell::new(buffer),
             is_decrypted: AtomicBool::new(false),
+            extra: (),
             _phantom: PhantomData,
         }
     }
 }
 
-impl<const KEY: u8, D: DropStrategy, const N: usize> Deref
+impl<const KEY: u8, D: DropStrategy<Extra = ()>, const N: usize> Deref
     for Encrypted<Xor<KEY, D>, ByteArray, N>
 {
     type Target = [u8; N];
@@ -69,7 +115,7 @@ impl<const KEY: u8, D: DropStrategy, const N: usize> Deref
     }
 }
 
-impl<const KEY: u8, D: DropStrategy, const N: usize> Deref
+impl<const KEY: u8, D: DropStrategy<Extra = ()>, const N: usize> Deref
     for Encrypted<Xor<KEY, D>, StringLiteral, N>
 {
     type Target = str;
@@ -100,10 +146,10 @@ impl<const KEY: u8, D: DropStrategy, const N: usize> Deref
 mod tests {
     use super::*;
     use crate::{
-        ByteArray, StringLiteral,
-        align::{Aligned8, Aligned16},
+        align::{Aligned16, Aligned8},
         drop_strategy::{NoOp, Zeroize},
         xor::Xor,
+        ByteArray, StringLiteral,
     };
 
     use alloc::vec;
@@ -230,6 +276,7 @@ mod tests {
             assert_sync::<Encrypted<Xor<0xBB, ReEncrypt<0xBB>>, StringLiteral, 5>>();
             assert_sync::<Encrypted<Xor<0xCC, NoOp>, ByteArray, 8>>();
         }
+        check();
     }
 
     #[test]

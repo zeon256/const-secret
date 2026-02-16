@@ -1,6 +1,6 @@
 # const-secret
 
-A compile-time constant XOR encryption library for Rust with pluggable drop strategies.
+A compile-time constant encryption library for Rust with pluggable drop strategies and multiple algorithms.
 
 ## Motivation
 
@@ -8,7 +8,10 @@ A lot of the static or const string libraries make use of heavy macros which I d
 
 ## Features
 
-- **Compile-time encryption**: Secrets are XOR-encrypted at compile time; plaintext never appears in the binary.
+- **Compile-time encryption**: Secrets are encrypted at compile time; plaintext never appears in the binary.
+- **Multiple algorithms**:
+  - **XOR** — Simple, fast single-byte XOR (best for basic obfuscation).
+  - **RC4** — Stream cipher with variable-length keys (1-256 bytes) for slightly better obfuscation.
 - **Generic drop strategies**: Choose how the decrypted buffer is handled on drop:
   - `Zeroize` — Securely overwrite memory using the `zeroize` crate (vendor-approved).
   - `ReEncrypt<KEY>` — Re-encrypt the buffer back to ciphertext on drop.
@@ -66,15 +69,50 @@ const TEST_DATA: Encrypted<Xor<0xCC, NoOp>, ByteArray, 4> =
     Encrypted::<Xor<0xCC, NoOp>, ByteArray, 4>::new([1, 2, 3, 4]);
 ```
 
+### RC4 Algorithm (variable-length keys)
+
+RC4 is a stream cipher that supports keys from 1 to 256 bytes. **Note:** RC4 is cryptographically broken; use only for obfuscation purposes.
+
+```rust
+use const_secret::{Encrypted, StringLiteral};
+use const_secret::drop_strategy::Zeroize;
+use const_secret::rc4::Rc4;
+
+const KEY: [u8; 16] = *b"my-secret-key!!";
+
+const SECRET: Encrypted<Rc4<16, Zeroize<[u8; 16]>>, StringLiteral, 6> =
+    Encrypted::<Rc4<16, Zeroize<[u8; 16]>>, StringLiteral, 6>::new(*b"rc4sec", KEY);
+
+fn main() {
+    let plaintext: &str = &*SECRET;
+    println!("{}", plaintext);  // prints: rc4sec
+}
+```
+
+#### RC4 with ReEncrypt
+
+```rust
+use const_secret::{Encrypted, ByteArray};
+use const_secret::rc4::{Rc4, ReEncrypt};
+
+const KEY: [u8; 8] = *b"rc4key!!";
+
+const DATA: Encrypted<Rc4<8, ReEncrypt<8>>, ByteArray, 10> =
+    Encrypted::<Rc4<8, ReEncrypt<8>>, ByteArray, 10>::new(*b"sensitive!", KEY);
+```
+
 ## How it works
 
-1. **Compile-time encryption**: `Encrypted::new()` XORs plaintext with key at compile time, storing ciphertext in the binary.
+1. **Compile-time encryption**: `Encrypted::new()` encrypts plaintext at compile time using the selected algorithm:
+   - **XOR**: XORs each byte with the single-byte key.
+   - **RC4**: Runs the Key Scheduling Algorithm (KSA) to initialize the S-box, then the Pseudo-Random Generation Algorithm (PRGA) to generate a keystream and XOR with plaintext.
+   The ciphertext is stored in the binary; plaintext never appears.
 2. **Lazy decryption**: `Deref` checks an atomic one-time flag:
-   - first successful check sets the flag and XORs ciphertext -> plaintext,
-   - later derefs skip re-XOR and return plaintext directly.
+   - First successful check sets the flag and decrypts ciphertext -> plaintext in place,
+   - Later derefs skip re-decryption and return plaintext directly.
 3. **Drop**: selected `DropStrategy` runs:
    - `Zeroize`: secure overwrite via `zeroize`,
-   - `ReEncrypt<KEY>`: XOR plaintext back to ciphertext,
+   - `ReEncrypt`: re-encrypts plaintext back to ciphertext,
    - `NoOp`: no cleanup.
 
 ## Verification
@@ -193,7 +231,7 @@ cargo run --example debug_drop
 
 ## Caveats
 
-- **XOR is not a cryptographic algorithm**: XOR alone provides obfuscation, not encryption. Use this for compile-time constant storage with defense-in-depth layering, not as a standalone encryption scheme.
+- **Not cryptographically secure**: Both XOR and RC4 provide obfuscation, not encryption. RC4 is cryptographically broken. Use this library for compile-time constant storage with defense-in-depth layering, not as a standalone encryption scheme.
 
 - **Memory observability**: This library does not protect against memory-reading attacks. Once a secret is decrypted and in scope, an attacker with physical access (e.g., cold-boot attack), debugger access, or memory-disclosure vulnerabilities can observe the plaintext in RAM. Even `Zeroize` and `ReEncrypt` only clean up *after* the value is dropped—the plaintext remains observable while the value is live and dereferenced.
   
@@ -203,7 +241,16 @@ cargo run --example debug_drop
   - Encrypting sensitive data at rest and only decrypting on demand
   - Layering `Zeroize`/`ReEncrypt` with your own memory-access controls
   
-  Use this library as part of a defense-in-depth strategy, not as a standalone guarantee. 
+  Use this library as part of a defense-in-depth strategy, not as a standalone guarantee.
+
+## Choosing an Algorithm
+
+| Algorithm | Speed | Key Size | Use Case |
+|-----------|-------|----------|----------|
+| **XOR** | Fastest | Single byte (0-255) | Speed-critical, simple obfuscation |
+| **RC4** | Medium | 1-256 bytes | Variable key length, slightly better obfuscation |
+
+**Recommendation**: Use XOR for most cases—it's faster and simpler. Use RC4 only if you need variable-length keys for some reason. 
 
 <details>
 <summary>Example: Checking the Binary</summary>
