@@ -65,6 +65,10 @@
 #[cfg(test)]
 extern crate std;
 
+#[cfg(test)]
+extern crate alloc;
+
+pub mod align;
 pub mod drop_strategy;
 pub mod xor;
 
@@ -105,11 +109,3 @@ where
     M: Sync,
 {
 }
-
-#[repr(align(8))]
-#[derive(Debug)]
-pub struct Aligned8<E>(E);
-
-#[repr(align(16))]
-#[derive(Debug)]
-pub struct Aligned16<E>(E);
