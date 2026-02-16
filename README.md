@@ -193,10 +193,17 @@ cargo run --example debug_drop
 
 ## Caveats
 
-- **XOR is not cryptographic encryption**: this is obfuscation/encoding for compile-time constant protection, not standalone cryptography.
-- **Runtime memory observability**: once decrypted, plaintext can be visible in RAM while live. `Zeroize`/`ReEncrypt` only run on drop.
+- **XOR is not a cryptographic algorithm**: XOR alone provides obfuscation, not encryption. Use this for compile-time constant storage with defense-in-depth layering, not as a standalone encryption scheme.
 
-This is by design: the goal is to avoid embedding plaintext in static binaries. For stronger protection, combine with stricter runtime controls and defense-in-depth.
+- **Memory observability**: This library does not protect against memory-reading attacks. Once a secret is decrypted and in scope, an attacker with physical access (e.g., cold-boot attack), debugger access, or memory-disclosure vulnerabilities can observe the plaintext in RAM. Even `Zeroize` and `ReEncrypt` only clean up *after* the value is dropped—the plaintext remains observable while the value is live and dereferenced.
+  
+  **This is by design.** The library's goal is to prevent secrets from being embedded in the static binary, not to provide runtime memory protection. If you need defense against memory-reading attacks, consider:
+  - Using trusted execution environments (TEEs) or secure enclaves
+  - Minimizing plaintext lifetime and reducing the number of copies in memory
+  - Encrypting sensitive data at rest and only decrypting on demand
+  - Layering `Zeroize`/`ReEncrypt` with your own memory-access controls
+  
+  Use this library as part of a defense-in-depth strategy, not as a standalone guarantee. 
 
 <details>
 <summary>Example: Checking the Binary</summary>
