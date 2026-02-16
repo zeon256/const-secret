@@ -19,7 +19,7 @@ A lot of the static or const string libraries make use of heavy macros which I d
 
 ## Usage
 
-```
+```rust
 use const_secret::{Encrypted, Xor, ByteArray, StringLiteral};
 use const_secret::drop_strategy::Zeroize;
 
@@ -38,7 +38,7 @@ When `SECRET` goes out of scope, the `Zeroize` drop strategy securely overwrites
 
 #### Zeroize (recommended for production)
 
-```
+```rust
 use const_secret::{Encrypted, Xor, ByteArray};
 use const_secret::drop_strategy::Zeroize;
 
@@ -48,7 +48,7 @@ const API_KEY: Encrypted<Xor<0x42, Zeroize>, ByteArray, 16> =
 
 #### ReEncrypt (re-encrypts on drop)
 
-```
+```rust
 use const_secret::{Encrypted, Xor, StringLiteral};
 use const_secret::xor::ReEncrypt;
 
@@ -58,7 +58,7 @@ const PASSWORD: Encrypted<Xor<0xBB, ReEncrypt<0xBB>>, StringLiteral, 8> =
 
 #### NoOp (no cleanup; use with caution)
 
-```
+```rust
 use const_secret::{Encrypted, Xor, ByteArray};
 use const_secret::drop_strategy::NoOp;
 
@@ -70,7 +70,7 @@ const TEST_DATA: Encrypted<Xor<0xCC, NoOp>, ByteArray, 4> =
 
 ### 1) Verify plaintext is absent from the binary
 
-```
+```rust
 cargo build --example debug_drop
 strings target/debug/examples/debug_drop | grep -E "^(hello|world|secret|leaked)$"
 # Expected: no output
@@ -78,7 +78,7 @@ strings target/debug/examples/debug_drop | grep -E "^(hello|world|secret|leaked)
 
 ### 2) Verify release assembly has atomic guard + XOR transforms
 
-```
+```rust
 cargo build --example debug_drop --release
 objdump -d target/release/examples/debug_drop | grep -Ei "cmpxchg|xorl|xorb|movaps|xorps|0xaaaaaaaa|0xbbbbbbbb|0xdddddddd|0xeeeeeeee"
 ```
@@ -98,7 +98,7 @@ For short strings (like 5 bytes), optimized code typically uses:
 
 Example pattern:
 
-```
+```assembly
 test   %al,%al
 jnz    ...
 mov    $0x1,%cl
@@ -119,14 +119,14 @@ With longer strings (e.g. the long `ReEncrypt<0xBB>` example in `examples/debug_
 
 Quick grep:
 
-```
+```bash
 cargo build --example debug_drop --release
 objdump -d target/release/examples/debug_drop | grep -Ei "cmpxchg|movaps|xorps|0xbbbbbbbb"
 ```
 
 Representative pattern:
 
-```
+```assembly
 test   %al,%al
 jnz    ...
 lock cmpxchg %cl,offset(%rsp)
@@ -150,22 +150,9 @@ Notes:
 
 AArch64 quick check:
 
-```
+```bash
 cargo build --example debug_drop --release --target aarch64-unknown-linux-gnu
 objdump -d target/aarch64-unknown-linux-gnu/release/examples/debug_drop | grep -Ei "ldxr|stxr|cas|eor|0xbb|0xaa|0xdd|0xee"
-```
-
-### D. Optional debugger workflow
-
-```
-cargo build --example debug_drop
-lldb target/debug/examples/debug_drop
-
-(lldb) b const_secret::Encrypted::drop
-(lldb) run
-(lldb) frame variable secret
-(lldb) memory read -count 5 &secret
-# For long payload tests, increase -count accordingly.
 ```
 
 ## How it works
@@ -181,7 +168,7 @@ lldb target/debug/examples/debug_drop
 
 ## Building
 
-```
+```bash
 cargo build
 cargo test
 cargo build --example debug_drop
@@ -205,7 +192,7 @@ This is by design: the goal is to avoid embedding plaintext in static binaries. 
 
 ## Example: Checking the Binary
 
-```
+```bash
 cargo build --example debug_drop
 strings target/debug/examples/debug_drop | grep -c hello
 # Output: 0
