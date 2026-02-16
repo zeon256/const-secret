@@ -19,7 +19,7 @@ A lot of the static or const string libraries make use of heavy macros which I d
 
 ## Usage
 
-```rust
+```
 use const_secret::{Encrypted, Xor, ByteArray, StringLiteral};
 use const_secret::drop_strategy::Zeroize;
 
@@ -37,7 +37,8 @@ When `SECRET` goes out of scope, the `Zeroize` drop strategy securely overwrites
 ### Different Drop Strategies
 
 #### Zeroize (recommended for production)
-```rust
+
+```
 use const_secret::{Encrypted, Xor, ByteArray};
 use const_secret::drop_strategy::Zeroize;
 
@@ -46,7 +47,8 @@ const API_KEY: Encrypted<Xor<0x42, Zeroize>, ByteArray, 16> =
 ```
 
 #### ReEncrypt (re-encrypts on drop)
-```rust
+
+```
 use const_secret::{Encrypted, Xor, StringLiteral};
 use const_secret::xor::ReEncrypt;
 
@@ -55,7 +57,8 @@ const PASSWORD: Encrypted<Xor<0xBB, ReEncrypt<0xBB>>, StringLiteral, 8> =
 ```
 
 #### NoOp (no cleanup; use with caution)
-```rust
+
+```
 use const_secret::{Encrypted, Xor, ByteArray};
 use const_secret::drop_strategy::NoOp;
 
@@ -63,120 +66,122 @@ const TEST_DATA: Encrypted<Xor<0xCC, NoOp>, ByteArray, 4> =
     Encrypted::<Xor<0xCC, NoOp>, ByteArray, 4>::new([1, 2, 3, 4]);
 ```
 
-## Verification
+## Verification (Quick Checks)
 
-### Verify plaintext is absent from binary
+### 1) Verify plaintext is absent from the binary
 
-Build the example and check that the plaintext strings don't appear:
-
-```bash
+```
 cargo build --example debug_drop
 strings target/debug/examples/debug_drop | grep -E "^(hello|world|secret|leaked)$"
-# Should print nothing (plaintext is encrypted in the binary)
+# Expected: no output
 ```
 
-### Inspect drop strategies with a debugger
+### 2) Verify release assembly has atomic guard + XOR transforms
 
-The release binary includes optimized drop implementations. You can verify the actual XOR operations via `objdump`.
-
-<details>
-<summary><strong>ARM64 (AArch64)</strong></summary>
-
-#### Debug build
-
-```bash
-cargo build --example debug_drop
-objdump -d target/debug/examples/debug_drop | grep -A 20 "ReEncrypt.*drop"
 ```
-
-Look for the XOR instruction pattern:
-```asm
-mov	w10, #0xbb        ; load the key (0xBB for ReEncrypt)
-eor	w8, w8, w10       ; XOR the byte
-strb	w8, [x9]         ; store back
-```
-
-#### Release build (SIMD-optimized)
-
-```bash
 cargo build --example debug_drop --release
-objdump -d target/release/examples/debug_drop | grep -B 5 -A 5 "movi.4h.*0xbb"
+objdump -d target/release/examples/debug_drop | grep -Ei "cmpxchg|xorl|xorb|movaps|xorps|0xaaaaaaaa|0xbbbbbbbb|0xdddddddd|0xeeeeeeee"
 ```
 
-Look for SIMD XOR operations:
-```asm
-movi.4h	v1, #0xbb       ; load 0xBB into vector register
-eor.8b	v0, v0, v1      ; XOR 4 bytes at once
-eor	w8, w8, #0xbbbbbbbb ; XOR remaining byte
+Expected:
+- `cmpxchg` (or equivalent atomic guard pattern),
+- scalar XOR for short buffers (`xorl` + `xorb`),
+- SIMD XOR for long buffers (`movaps` + `xorps`) when optimization chooses vectorization.
+
+## Verification (Detailed)
+
+### A. Short payloads: expect scalar XOR (very common)
+
+For short strings (like 5 bytes), optimized code typically uses:
+- one 4-byte XOR immediate (`imm32`),
+- one 1-byte XOR immediate (`imm8`).
+
+Example pattern:
+
+```
+test   %al,%al
+jnz    ...
+mov    $0x1,%cl
+xor    %eax,%eax
+lock cmpxchg %cl,offset(%rsp)
+jnz    ...
+xorl   $0xbbbbbbbb,(%rsp)
+xorb   $0xbb,0x4(%rsp)
 ```
 
-</details>
+This means:
+- one-time guard succeeds once,
+- payload is transformed in place with minimal scalar instructions.
 
-<details>
-<summary><strong>x86_64</strong></summary>
+### B. Long payloads: SIMD may be emitted
 
-#### Debug build
+With longer strings (e.g. the long `ReEncrypt<0xBB>` example in `examples/debug_drop.rs`), release builds may vectorize XOR into 16-byte chunks.
 
-```bash
-cargo build --example debug_drop
-objdump -d target/debug/examples/debug_drop | grep -A 20 "ReEncrypt.*drop"
+Quick grep:
+
 ```
-
-Look for the XOR instruction pattern:
-```asm
-mov    $0xbb,%eax       ; load the key (0xBB for ReEncrypt)
-xor    %eax,(%rdi)      ; XOR the bytes
-movzbl (%rdi),%eax      ; load byte back
-```
-
-#### Release build (SIMD-optimized)
-
-```bash
 cargo build --example debug_drop --release
-objdump -d target/release/examples/debug_drop | grep -B 5 -A 5 "vpternlog"
+objdump -d target/release/examples/debug_drop | grep -Ei "cmpxchg|movaps|xorps|0xbbbbbbbb"
 ```
 
-Look for SIMD XOR operations:
-```asm
-vpxor  xmm0,xmm1,xmm0   ; XOR 16 bytes at once with SIMD
-xor    %eax,%eax        ; clear register
+Representative pattern:
+
+```
+test   %al,%al
+jnz    ...
+lock cmpxchg %cl,offset(%rsp)
+jnz    ...
+movaps xmm0,[key_mask_0xbb]
+movaps xmm1,[rsp+...]
+xorps  xmm1,xmm0
+movaps [rsp+...],xmm1
+... repeated for additional 16-byte chunks ...
 ```
 
-</details>
+Notes:
+- `xorps` is used as a bitwise XOR instruction on XMM registers.
+- Exact mnemonics/registers/offsets vary by LLVM version, optimization level, and target CPU features.
+- Seeing scalar in one build and SIMD in another is normal.
 
-### Run under debugger
+### C. Architecture notes
 
-Step through the drop implementations to observe the actual memory transformations:
+- **x86_64**: common to see `cmpxchg`, `xorl`/`xorb`, and for longer payloads `movaps`/`xorps`.
+- **AArch64**: look for atomic primitives (`ldxr`/`stxr` loops or `cas*`) and `eor` vector/scalar ops.
 
-```bash
+AArch64 quick check:
+
+```
+cargo build --example debug_drop --release --target aarch64-unknown-linux-gnu
+objdump -d target/aarch64-unknown-linux-gnu/release/examples/debug_drop | grep -Ei "ldxr|stxr|cas|eor|0xbb|0xaa|0xdd|0xee"
+```
+
+### D. Optional debugger workflow
+
+```
 cargo build --example debug_drop
 lldb target/debug/examples/debug_drop
 
-# Set breakpoints on drop implementations
 (lldb) b const_secret::Encrypted::drop
 (lldb) run
-
-# When stopped, inspect the buffer
 (lldb) frame variable secret
 (lldb) memory read -count 5 &secret
+# For long payload tests, increase -count accordingly.
 ```
 
 ## How it works
 
-1. **Compile-time encryption**: The `Encrypted::new()` const function XORs the plaintext with the key, storing only the ciphertext in the binary.
-
-2. **Lazy decryption**: The `Deref` impl checks an `AtomicBool` flag. On the first dereference:
-   - If the flag is false, it atomically sets it to true and XORs the buffer again (ciphertext XOR key = plaintext).
-   - Subsequent dereferences return the plaintext without re-XORing.
-
-3. **Drop**: When the `Encrypted` value is dropped, the associated `DropStrategy` is invoked:
-   - `Zeroize`: Uses the `zeroize` crate to securely overwrite.
-   - `ReEncrypt<KEY>`: XORs the plaintext with the key to restore the ciphertext.
-   - `NoOp`: Does nothing.
+1. **Compile-time encryption**: `Encrypted::new()` XORs plaintext with key at compile time, storing ciphertext in the binary.
+2. **Lazy decryption**: `Deref` checks an atomic one-time flag:
+   - first successful check sets the flag and XORs ciphertext -> plaintext,
+   - later derefs skip re-XOR and return plaintext directly.
+3. **Drop**: selected `DropStrategy` runs:
+   - `Zeroize`: secure overwrite via `zeroize`,
+   - `ReEncrypt<KEY>`: XOR plaintext back to ciphertext,
+   - `NoOp`: no cleanup.
 
 ## Building
 
-```bash
+```
 cargo build
 cargo test
 cargo build --example debug_drop
@@ -185,60 +190,38 @@ cargo run --example debug_drop
 
 ## Thread Safety
 
-The `Encrypted` struct is fully `Sync` and can be safely shared across threads:
+`Encrypted` is `Sync` and can be shared across threads:
 
-- The internal `AtomicBool` ensures only one thread performs the XOR decryption via compare-and-swap.
-- After the first deref, the buffer is immutable and thread-safe for concurrent reads.
-- Multiple threads can safely call `Deref` on the same `Encrypted` value concurrently.
+- An atomic flag gates the first XOR/decrypt path.
+- After first deref, concurrent reads are safe.
+- Multiple threads can deref the same value concurrently.
 
 ## Caveats
 
-- **XOR is not a cryptographic algorithm**: XOR alone provides obfuscation, not encryption. Use this for compile-time constant storage with defense-in-depth layering, not as a standalone encryption scheme.
+- **XOR is not cryptographic encryption**: this is obfuscation/encoding for compile-time constant protection, not standalone cryptography.
+- **Runtime memory observability**: once decrypted, plaintext can be visible in RAM while live. `Zeroize`/`ReEncrypt` only run on drop.
 
-- **Memory observability**: This library does not protect against memory-reading attacks. Once a secret is decrypted and in scope, an attacker with physical access (e.g., cold-boot attack), debugger access, or memory-disclosure vulnerabilities can observe the plaintext in RAM. Even `Zeroize` and `ReEncrypt` only clean up *after* the value is dropped—the plaintext remains observable while the value is live and dereferenced.
-  
-  **This is by design.** The library's goal is to prevent secrets from being embedded in the static binary, not to provide runtime memory protection. If you need defense against memory-reading attacks, consider:
-  - Using trusted execution environments (TEEs) or secure enclaves
-  - Minimizing plaintext lifetime and reducing the number of copies in memory
-  - Encrypting sensitive data at rest and only decrypting on demand
-  - Layering `Zeroize`/`ReEncrypt` with your own memory-access controls
-  
-  Use this library as part of a defense-in-depth strategy, not as a standalone guarantee.
+This is by design: the goal is to avoid embedding plaintext in static binaries. For stronger protection, combine with stricter runtime controls and defense-in-depth.
 
 ## Example: Checking the Binary
 
-Run the provided example and verify the plaintext is not embedded:
-
-```bash
+```
 cargo build --example debug_drop
 strings target/debug/examples/debug_drop | grep -c hello
-# Output: 0 (no matches—plaintext is encrypted)
+# Output: 0
 
 cargo run --example debug_drop
-# Output:
-# [zeroize] struct @ 0x...  (size 6)
+# Output includes:
 # [zeroize] decrypted: "hello"
-# 
-# [reencrypt] struct @ 0x...  (size 6)
 # [reencrypt] decrypted: "world"
-# 
-# [noop-no-deref] struct @ 0x...  (size 7)
-# 
-# [noop-derefed] struct @ 0x...  (size 7)
+# [reencrypt-long] decrypted: "world-world-world-world-world-world-world-world-world-world-1234"
 # [noop-derefed] decrypted: "leaked"
-# 
-# [bytes-zeroize] struct @ 0x...  (size 5)
 # [bytes-zeroize] decrypted: [de, ad, be, ef]
 # done — all secrets dropped
+
+cargo build --example debug_drop --release
+objdump -d target/release/examples/debug_drop | grep -Ei "cmpxchg|movaps|xorps|xorl|xorb|0xaaaaaaaa|0xbbbbbbbb|0xdddddddd|0xeeeeeeee"
 ```
-
-Then disassemble to see the drop strategies in action:
-
-```bash
-objdump -d target/debug/examples/debug_drop | grep -A 50 "ReEncrypt.*drop"
-```
-
-The objdump output will show the XOR instructions being inlined by the compiler.
 
 ## License
 
