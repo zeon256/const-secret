@@ -1,11 +1,13 @@
 use core::{
-    cell::UnsafeCell, marker::PhantomData, ops::Deref, sync::atomic::AtomicBool,
-    sync::atomic::Ordering,
+    cell::UnsafeCell,
+    marker::PhantomData,
+    ops::Deref,
+    sync::atomic::{AtomicBool, Ordering},
 };
 
 use crate::{
-    drop_strategy::{DropStrategy, Zeroize},
     Algorithm, ByteArray, Encrypted, StringLiteral,
+    drop_strategy::{DropStrategy, Zeroize},
 };
 
 pub struct ReEncrypt<const KEY: u8>;
@@ -96,10 +98,12 @@ impl<const KEY: u8, D: DropStrategy, const N: usize> Deref
 mod tests {
     use super::*;
     use crate::{
+        ByteArray, StringLiteral,
+        align::{Aligned8, Aligned16},
         drop_strategy::{NoOp, Zeroize},
         xor::Xor,
-        Aligned16, Aligned8, ByteArray, StringLiteral,
     };
+
     use alloc::vec;
     use alloc::vec::Vec;
     use core::{mem::size_of, sync::atomic::AtomicUsize};

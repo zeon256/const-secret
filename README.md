@@ -77,9 +77,13 @@ strings target/debug/examples/debug_drop | grep -E "^(hello|world|secret|leaked)
 
 ### Inspect drop strategies with a debugger
 
-The release binary includes optimized drop implementations. You can verify the actual XOR operations via `objdump`. The examples below are for **ARM64 (AArch64)**; x86_64 will show different instruction mnemonics but the same underlying logic (XOR operations).
+The release binary includes optimized drop implementations. You can verify the actual XOR operations via `objdump`.
 
-#### Debug build (ARM64)
+<details>
+<summary><strong>ARM64 (AArch64)</strong></summary>
+
+#### Debug build
+
 ```bash
 cargo build --example debug_drop
 objdump -d target/debug/examples/debug_drop | grep -A 20 "ReEncrypt.*drop"
@@ -92,7 +96,8 @@ eor	w8, w8, w10       ; XOR the byte
 strb	w8, [x9]         ; store back
 ```
 
-#### Release build (ARM64, SIMD-optimized)
+#### Release build (SIMD-optimized)
+
 ```bash
 cargo build --example debug_drop --release
 objdump -d target/release/examples/debug_drop | grep -B 5 -A 5 "movi.4h.*0xbb"
@@ -105,7 +110,39 @@ eor.8b	v0, v0, v1      ; XOR 4 bytes at once
 eor	w8, w8, #0xbbbbbbbb ; XOR remaining byte
 ```
 
-On x86_64, you'll see `mov`, `xor`, and `movzx` instructions instead, but the same drop strategy logic applies.
+</details>
+
+<details>
+<summary><strong>x86_64</strong></summary>
+
+#### Debug build
+
+```bash
+cargo build --example debug_drop
+objdump -d target/debug/examples/debug_drop | grep -A 20 "ReEncrypt.*drop"
+```
+
+Look for the XOR instruction pattern:
+```asm
+mov    $0xbb,%eax       ; load the key (0xBB for ReEncrypt)
+xor    %eax,(%rdi)      ; XOR the bytes
+movzbl (%rdi),%eax      ; load byte back
+```
+
+#### Release build (SIMD-optimized)
+
+```bash
+cargo build --example debug_drop --release
+objdump -d target/release/examples/debug_drop | grep -B 5 -A 5 "vpternlog"
+```
+
+Look for SIMD XOR operations:
+```asm
+vpxor  xmm0,xmm1,xmm0   ; XOR 16 bytes at once with SIMD
+xor    %eax,%eax        ; clear register
+```
+
+</details>
 
 ### Run under debugger
 
