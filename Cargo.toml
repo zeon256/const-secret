@@ -7,3 +7,4 @@ edition = "2024"
 zeroize = "1.8.2"
 
 [dev-dependencies]
+cargo-husky = { version = "1.5", features = ["precommit-hook", "user-hooks"] }

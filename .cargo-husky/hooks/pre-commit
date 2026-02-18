@@ -1,0 +1,47 @@
+#!/bin/bash
+# Pre-commit hook for const-secret
+# Runs fast checks before every commit
+
+set -e
+
+echo "🔍 Running pre-commit checks..."
+
+# Track failures
+FAILED=0
+
+# Run format check
+echo "  → Checking formatting..."
+if ! cargo fmt --all -- --check 2>&1; then
+    echo "    ✗ Formatting failed. Run 'cargo fmt --all' to fix."
+    FAILED=1
+else
+    echo "    ✓ Formatting OK"
+fi
+
+# Run clippy
+echo "  → Running Clippy..."
+if ! cargo clippy -- -D warnings 2>&1; then
+    echo "    ✗ Clippy warnings found."
+    FAILED=1
+else
+    echo "    ✓ Clippy OK"
+fi
+
+# Run tests
+echo "  → Running tests..."
+if ! cargo test 2>&1; then
+    echo "    ✗ Tests failed."
+    FAILED=1
+else
+    echo "    ✓ Tests OK"
+fi
+
+if [ $FAILED -eq 0 ]; then
+    echo ""
+    echo "✅ All pre-commit checks passed!"
+    exit 0
+else
+    echo ""
+    echo "❌ Pre-commit checks failed. Fix errors above before committing."
+    exit 1
+fi
