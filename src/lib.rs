@@ -136,6 +136,7 @@
 
 #![no_std]
 #![cfg_attr(not(debug_assertions), deny(warnings))]
+#![allow(unknown_lints)]
 #![warn(
     clippy::all,
     clippy::await_holding_lock,
