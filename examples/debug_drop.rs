@@ -1,8 +1,8 @@
 use const_secret::{
+    ByteArray, Encrypted, StringLiteral,
     drop_strategy::{NoOp, Zeroize},
     rc4::{Rc4, ReEncrypt as Rc4ReEncrypt},
     xor::{ReEncrypt, Xor},
-    ByteArray, Encrypted, StringLiteral,
 };
 
 const HELLO_ZEROIZE: Encrypted<Xor<0xAA, Zeroize>, StringLiteral, 5> =

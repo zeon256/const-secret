@@ -1,5 +1,13 @@
 # const-secret
 
+[![Crates.io](https://img.shields.io/crates/v/const-secret)](https://crates.io/crates/const-secret)
+[![Crates.io Downloads](https://img.shields.io/crates/d/const-secret)](https://crates.io/crates/const-secret)
+[![Docs.rs](https://img.shields.io/docsrs/const-secret)](https://docs.rs/const-secret)
+[![License](https://img.shields.io/crates/l/const-secret)](LICENSE-APACHE)
+[![MSRV](https://img.shields.io/badge/MSRV-1.85.1-orange)](https://blog.rust-lang.org/)
+[![Rust Edition](https://img.shields.io/badge/Rust-2024-blue)](https://doc.rust-lang.org/edition-guide/rust-2024/)
+[![no_std](https://img.shields.io/badge/no__std-compatible-success)](https://docs.rust-embedded.org/book/intro/no-std.html)
+
 A compile-time constant encryption library for Rust with pluggable drop strategies and multiple algorithms.
 
 ## Motivation

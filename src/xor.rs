@@ -49,8 +49,8 @@ use core::{
 };
 
 use crate::{
-    drop_strategy::{DropStrategy, Zeroize},
     Algorithm, ByteArray, Encrypted, StringLiteral,
+    drop_strategy::{DropStrategy, Zeroize},
 };
 
 pub struct ReEncrypt<const KEY: u8>;
@@ -146,10 +146,10 @@ impl<const KEY: u8, D: DropStrategy<Extra = ()>, const N: usize> Deref
 mod tests {
     use super::*;
     use crate::{
-        align::{Aligned16, Aligned8},
+        ByteArray, StringLiteral,
+        align::{Aligned8, Aligned16},
         drop_strategy::{NoOp, Zeroize},
         xor::Xor,
-        ByteArray, StringLiteral,
     };
 
     use alloc::vec;
