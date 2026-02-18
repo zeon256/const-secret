@@ -113,15 +113,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Setup Rust
+      - name: Setup Rust Nightly
         uses: ./.github/actions/setup-rust
         with:
-          toolchain: 1.93.1
+          toolchain: nightly
       - name: Install Miri
         run: |
-          rustup component add miri
-          cargo miri setup
+          rustup component add miri --toolchain nightly
+          cargo +nightly miri setup
       - name: Run Miri Tests
-        run: cargo miri test
+        run: cargo +nightly miri test
       - name: Run Miri on Examples
-        run: cargo miri run --example debug_drop
+        run: cargo +nightly miri run --example debug_drop
