@@ -45,11 +45,12 @@ use core::{
     cell::UnsafeCell,
     marker::PhantomData,
     ops::Deref,
-    sync::atomic::{AtomicBool, Ordering},
+    sync::atomic::{AtomicU8, Ordering},
 };
 
 use crate::{
-    Algorithm, ByteArray, Encrypted, StringLiteral,
+    Algorithm, ByteArray, Encrypted, STATE_DECRYPTED, STATE_DECRYPTING, STATE_UNENCRYPTED,
+    StringLiteral,
     drop_strategy::{DropStrategy, Zeroize},
 };
 
@@ -84,7 +85,7 @@ impl<const KEY: u8, D: DropStrategy<Extra = ()>, M, const N: usize> Encrypted<Xo
 
         Encrypted {
             buffer: UnsafeCell::new(buffer),
-            is_decrypted: AtomicBool::new(false),
+            decryption_state: AtomicU8::new(STATE_UNENCRYPTED),
             extra: (),
             _phantom: PhantomData,
         }
@@ -97,20 +98,43 @@ impl<const KEY: u8, D: DropStrategy<Extra = ()>, const N: usize> Deref
     type Target = [u8; N];
 
     fn deref(&self) -> &Self::Target {
-        if !self.is_decrypted.load(Ordering::Acquire)
-            && self
-                .is_decrypted
-                .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-                .is_ok()
-        {
-            // SAFETY: `buffer` is always initialized and points to valid `[u8; N]`.
-            let data = unsafe { &mut *self.buffer.get() };
-            for byte in data.iter_mut() {
-                *byte ^= KEY;
+        // Fast path: already decrypted
+        if self.decryption_state.load(Ordering::Acquire) == STATE_DECRYPTED {
+            // SAFETY: `buffer` is initialized and lives as long as `self`.
+            return unsafe { &*self.buffer.get() };
+        }
+
+        // Try to acquire the decryption lock by transitioning from UNENCRYPTED to DECRYPTING
+        match self.decryption_state.compare_exchange(
+            STATE_UNENCRYPTED,
+            STATE_DECRYPTING,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        ) {
+            Ok(_) => {
+                // SAFETY: `buffer` is always initialized and points to valid `[u8; N]`.
+                // We won the race, perform decryption with exclusive mutable access.
+                let data = unsafe { &mut *self.buffer.get() };
+                for byte in data.iter_mut() {
+                    *byte ^= KEY;
+                }
+
+                // Decryption complete - release lock by transitioning to DECRYPTED
+                // Use Release ordering to ensure all decryption writes are visible to other threads
+                self.decryption_state.store(STATE_DECRYPTED, Ordering::Release);
+            }
+            Err(_) => {
+                // Lost the race - another thread is decrypting
+                // Spin-wait until decryption completes
+                while self.decryption_state.load(Ordering::Acquire) != STATE_DECRYPTED {
+                    core::hint::spin_loop();
+                }
             }
         }
 
         // SAFETY: `buffer` is initialized and lives as long as `self`.
+        // Decryption is complete (either by us or another thread), so it's safe
+        // to return a shared reference.
         unsafe { &*self.buffer.get() }
     }
 }
@@ -121,20 +145,45 @@ impl<const KEY: u8, D: DropStrategy<Extra = ()>, const N: usize> Deref
     type Target = str;
 
     fn deref(&self) -> &Self::Target {
-        if !self.is_decrypted.load(Ordering::Acquire)
-            && self
-                .is_decrypted
-                .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-                .is_ok()
-        {
-            // SAFETY: `buffer` is always initialized and points to valid `[u8; N]`.
-            let data = unsafe { &mut *self.buffer.get() };
-            for byte in data.iter_mut() {
-                *byte ^= KEY;
+        // Fast path: already decrypted
+        if self.decryption_state.load(Ordering::Acquire) == STATE_DECRYPTED {
+            // SAFETY: `buffer` is initialized and lives as long as `self`.
+            let bytes = unsafe { &*self.buffer.get() };
+            // SAFETY: Since the original input was a valid UTF-8 string literal, XOR with a single byte key will not produce invalid UTF-8. The length is also preserved, so the resulting bytes will still form a valid UTF-8 string.
+            return unsafe { core::str::from_utf8_unchecked(bytes) };
+        }
+
+        // Try to acquire the decryption lock by transitioning from UNENCRYPTED to DECRYPTING
+        match self.decryption_state.compare_exchange(
+            STATE_UNENCRYPTED,
+            STATE_DECRYPTING,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        ) {
+            Ok(_) => {
+                // SAFETY: `buffer` is always initialized and points to valid `[u8; N]`.
+                // We won the race, perform decryption with exclusive mutable access.
+                let data = unsafe { &mut *self.buffer.get() };
+                for byte in data.iter_mut() {
+                    *byte ^= KEY;
+                }
+
+                // Decryption complete - release lock by transitioning to DECRYPTED
+                // Use Release ordering to ensure all decryption writes are visible to other threads
+                self.decryption_state.store(STATE_DECRYPTED, Ordering::Release);
+            }
+            Err(_) => {
+                // Lost the race - another thread is decrypting
+                // Spin-wait until decryption completes
+                while self.decryption_state.load(Ordering::Acquire) != STATE_DECRYPTED {
+                    core::hint::spin_loop();
+                }
             }
         }
 
         // SAFETY: `buffer` is initialized and lives as long as `self`.
+        // Decryption is complete (either by us or another thread), so it's safe
+        // to return a shared reference.
         let bytes = unsafe { &*self.buffer.get() };
 
         // SAFETY: Since the original input was a valid UTF-8 string literal, XOR with a single byte key will not produce invalid UTF-8. The length is also preserved, so the resulting bytes will still form a valid UTF-8 string.

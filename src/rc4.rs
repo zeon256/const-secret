@@ -56,11 +56,12 @@ use core::{
     cell::UnsafeCell,
     marker::PhantomData,
     ops::Deref,
-    sync::atomic::{AtomicBool, Ordering},
+    sync::atomic::{AtomicU8, Ordering},
 };
 
 use crate::{
-    Algorithm, ByteArray, Encrypted, StringLiteral,
+    Algorithm, ByteArray, Encrypted, STATE_DECRYPTED, STATE_DECRYPTING, STATE_UNENCRYPTED,
+    StringLiteral,
     drop_strategy::{DropStrategy, Zeroize},
 };
 
@@ -177,7 +178,7 @@ impl<const KEY_LEN: usize, D: DropStrategy<Extra = [u8; KEY_LEN]>, M, const N: u
 
         Encrypted {
             buffer: UnsafeCell::new(buffer),
-            is_decrypted: AtomicBool::new(false),
+            decryption_state: AtomicU8::new(STATE_UNENCRYPTED),
             extra: key,
             _phantom: PhantomData,
         }
@@ -190,49 +191,72 @@ impl<const KEY_LEN: usize, D: DropStrategy<Extra = [u8; KEY_LEN]>, const N: usiz
     type Target = [u8; N];
 
     fn deref(&self) -> &Self::Target {
-        if !self.is_decrypted.load(Ordering::Acquire)
-            && self
-                .is_decrypted
-                .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-                .is_ok()
-        {
-            // SAFETY: `buffer` is always initialized and points to valid `[u8; N]`.
-            let data = unsafe { &mut *self.buffer.get() };
-            // Reconstruct RC4 state from stored key and decrypt
-            let key = &self.extra;
-            let mut s = [0u8; 256];
-            let mut j: u8 = 0;
+        // Fast path: already decrypted
+        if self.decryption_state.load(Ordering::Acquire) == STATE_DECRYPTED {
+            // SAFETY: `buffer` is initialized and lives as long as `self`.
+            return unsafe { &*self.buffer.get() };
+        }
 
-            // Initialize S-box
-            let mut i = 0usize;
-            while i < 256 {
-                s[i] = i as u8;
-                i += 1;
+        // Try to acquire the decryption lock by transitioning from UNENCRYPTED to DECRYPTING
+        match self.decryption_state.compare_exchange(
+            STATE_UNENCRYPTED,
+            STATE_DECRYPTING,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        ) {
+            Ok(_) => {
+                // SAFETY: `buffer` is always initialized and points to valid `[u8; N]`.
+                // We won the race, perform decryption with exclusive mutable access.
+                let data = unsafe { &mut *self.buffer.get() };
+                // Reconstruct RC4 state from stored key and decrypt
+                let key = &self.extra;
+                let mut s = [0u8; 256];
+                let mut j: u8 = 0;
+
+                // Initialize S-box
+                let mut i = 0usize;
+                while i < 256 {
+                    s[i] = i as u8;
+                    i += 1;
+                }
+
+                // KSA
+                let mut i = 0usize;
+                while i < 256 {
+                    j = j.wrapping_add(s[i]).wrapping_add(key[i % KEY_LEN]);
+                    s.swap(i, j as usize);
+                    i += 1;
+                }
+
+                // PRGA: Decrypt
+                let mut i: u8 = 0;
+                j = 0;
+                let mut idx = 0usize;
+                while idx < N {
+                    i = i.wrapping_add(1);
+                    j = j.wrapping_add(s[i as usize]);
+                    s.swap(i as usize, j as usize);
+                    let k = s[(s[i as usize].wrapping_add(s[j as usize])) as usize];
+                    data[idx] ^= k;
+                    idx += 1;
+                }
+
+                // Decryption complete - release lock by transitioning to DECRYPTED
+                // Use Release ordering to ensure all decryption writes are visible to other threads
+                self.decryption_state.store(STATE_DECRYPTED, Ordering::Release);
             }
-
-            // KSA
-            let mut i = 0usize;
-            while i < 256 {
-                j = j.wrapping_add(s[i]).wrapping_add(key[i % KEY_LEN]);
-                s.swap(i, j as usize);
-                i += 1;
-            }
-
-            // PRGA: Decrypt
-            let mut i: u8 = 0;
-            j = 0;
-            let mut idx = 0usize;
-            while idx < N {
-                i = i.wrapping_add(1);
-                j = j.wrapping_add(s[i as usize]);
-                s.swap(i as usize, j as usize);
-                let k = s[(s[i as usize].wrapping_add(s[j as usize])) as usize];
-                data[idx] ^= k;
-                idx += 1;
+            Err(_) => {
+                // Lost the race - another thread is decrypting
+                // Spin-wait until decryption completes
+                while self.decryption_state.load(Ordering::Acquire) != STATE_DECRYPTED {
+                    core::hint::spin_loop();
+                }
             }
         }
 
         // SAFETY: `buffer` is initialized and lives as long as `self`.
+        // Decryption is complete (either by us or another thread), so it's safe
+        // to return a shared reference.
         unsafe { &*self.buffer.get() }
     }
 }
@@ -243,49 +267,76 @@ impl<const KEY_LEN: usize, D: DropStrategy<Extra = [u8; KEY_LEN]>, const N: usiz
     type Target = str;
 
     fn deref(&self) -> &Self::Target {
-        if !self.is_decrypted.load(Ordering::Acquire)
-            && self
-                .is_decrypted
-                .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-                .is_ok()
-        {
-            // SAFETY: `buffer` is always initialized and points to valid `[u8; N]`.
-            let data = unsafe { &mut *self.buffer.get() };
-            // Reconstruct RC4 state from stored key and decrypt
-            let key = &self.extra;
-            let mut s = [0u8; 256];
-            let mut j: u8 = 0;
+        // Fast path: already decrypted
+        if self.decryption_state.load(Ordering::Acquire) == STATE_DECRYPTED {
+            // SAFETY: `buffer` is initialized and lives as long as `self`.
+            let bytes = unsafe { &*self.buffer.get() };
+            // SAFETY: Since the original input was a valid UTF-8 string literal, XOR
+            // with RC4 keystream preserves the length, and RC4 is a bijection,
+            // so the resulting bytes will still form a valid UTF-8 string.
+            return unsafe { core::str::from_utf8_unchecked(bytes) };
+        }
 
-            // Initialize S-box
-            let mut i = 0usize;
-            while i < 256 {
-                s[i] = i as u8;
-                i += 1;
+        // Try to acquire the decryption lock by transitioning from UNENCRYPTED to DECRYPTING
+        match self.decryption_state.compare_exchange(
+            STATE_UNENCRYPTED,
+            STATE_DECRYPTING,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        ) {
+            Ok(_) => {
+                // SAFETY: `buffer` is always initialized and points to valid `[u8; N]`.
+                // We won the race, perform decryption with exclusive mutable access.
+                let data = unsafe { &mut *self.buffer.get() };
+                // Reconstruct RC4 state from stored key and decrypt
+                let key = &self.extra;
+                let mut s = [0u8; 256];
+                let mut j: u8 = 0;
+
+                // Initialize S-box
+                let mut i = 0usize;
+                while i < 256 {
+                    s[i] = i as u8;
+                    i += 1;
+                }
+
+                // KSA
+                let mut i = 0usize;
+                while i < 256 {
+                    j = j.wrapping_add(s[i]).wrapping_add(key[i % KEY_LEN]);
+                    s.swap(i, j as usize);
+                    i += 1;
+                }
+
+                // PRGA: Decrypt
+                let mut i: u8 = 0;
+                j = 0;
+                let mut idx = 0usize;
+                while idx < N {
+                    i = i.wrapping_add(1);
+                    j = j.wrapping_add(s[i as usize]);
+                    s.swap(i as usize, j as usize);
+                    let k = s[(s[i as usize].wrapping_add(s[j as usize])) as usize];
+                    data[idx] ^= k;
+                    idx += 1;
+                }
+
+                // Decryption complete - release lock by transitioning to DECRYPTED
+                // Use Release ordering to ensure all decryption writes are visible to other threads
+                self.decryption_state.store(STATE_DECRYPTED, Ordering::Release);
             }
-
-            // KSA
-            let mut i = 0usize;
-            while i < 256 {
-                j = j.wrapping_add(s[i]).wrapping_add(key[i % KEY_LEN]);
-                s.swap(i, j as usize);
-                i += 1;
-            }
-
-            // PRGA: Decrypt
-            let mut i: u8 = 0;
-            j = 0;
-            let mut idx = 0usize;
-            while idx < N {
-                i = i.wrapping_add(1);
-                j = j.wrapping_add(s[i as usize]);
-                s.swap(i as usize, j as usize);
-                let k = s[(s[i as usize].wrapping_add(s[j as usize])) as usize];
-                data[idx] ^= k;
-                idx += 1;
+            Err(_) => {
+                // Lost the race - another thread is decrypting
+                // Spin-wait until decryption completes
+                while self.decryption_state.load(Ordering::Acquire) != STATE_DECRYPTED {
+                    core::hint::spin_loop();
+                }
             }
         }
 
         // SAFETY: `buffer` is initialized and lives as long as `self`.
+        // Decryption is complete (either by us or another thread), so it's safe
+        // to return a shared reference.
         let bytes = unsafe { &*self.buffer.get() };
 
         // SAFETY: Since the original input was a valid UTF-8 string literal, XOR

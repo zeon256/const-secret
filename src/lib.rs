@@ -211,7 +211,12 @@ pub mod rc4;
 pub mod xor;
 
 use crate::drop_strategy::DropStrategy;
-use core::{cell::UnsafeCell, fmt, marker::PhantomData, sync::atomic::AtomicBool};
+use core::{cell::UnsafeCell, fmt, marker::PhantomData, sync::atomic::AtomicU8};
+
+/// Decryption state constants for thread-safe lazy decryption
+pub(crate) const STATE_UNENCRYPTED: u8 = 0;
+pub(crate) const STATE_DECRYPTING: u8 = 1;
+pub(crate) const STATE_DECRYPTED: u8 = 2;
 
 /// A trait that defines an encryption algorithm and its associated types.
 ///
@@ -297,10 +302,13 @@ pub struct Encrypted<A: Algorithm, M, const N: usize> {
     ///
     /// Uses [`UnsafeCell`] for interior mutability to allow decryption on first access.
     buffer: UnsafeCell<[u8; N]>,
-    /// Flag indicating whether the buffer has been decrypted.
+    /// State of decryption (0=unencrypted, 1=decrypting, 2=decrypted).
     ///
-    /// Uses atomic operations to ensure thread-safe one-time decryption.
-    is_decrypted: AtomicBool,
+    /// Uses atomic operations to ensure thread-safe lazy decryption.
+    /// - `STATE_UNENCRYPTED` (0): Initial state, needs decryption
+    /// - `STATE_DECRYPTING` (1): A thread is currently decrypting
+    /// - `STATE_DECRYPTED` (2): Decryption complete, safe to read
+    decryption_state: AtomicU8,
     /// Algorithm-specific extra data (e.g., the encryption key for RC4).
     extra: A::Extra,
     /// Phantom marker to carry the algorithm and mode type information.
@@ -311,11 +319,11 @@ impl<A: Algorithm, M, const N: usize> fmt::Debug for Encrypted<A, M, N> {
     /// Formats the `Encrypted` struct for debugging.
     ///
     /// Note that the actual buffer contents are not displayed for security reasons.
-    /// Only the `is_decrypted` flag is shown. The output uses `finish_non_exhaustive()`
+    /// Only the `decryption_state` is shown. The output uses `finish_non_exhaustive()`
     /// to indicate there are additional fields not shown.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Encrypted")
-            .field("is_decrypted", &self.is_decrypted)
+            .field("decryption_state", &self.decryption_state)
             .finish_non_exhaustive()
     }
 }
@@ -334,11 +342,12 @@ impl<A: Algorithm, M, const N: usize> Drop for Encrypted<A, M, N> {
 }
 
 // SAFETY: `Encrypted` is `Sync` because:
-// 1. The `AtomicBool` ensures only one thread can transition `is_decrypted` from false to true
-//    via `compare_exchange`, providing exclusive access to the mutation.
-// 2. After the first successful deref, `is_decrypted` is true and the buffer never mutates again.
-// 3. Multiple threads can safely read the stable, decrypted buffer concurrently.
-// 4. The buffer is only mutated during initialization (const) and the first deref (once per value).
+// 1. The 3-state `decryption_state` (AtomicU8) ensures proper synchronization:
+//    - Only one thread can transition from UNENCRYPTED to DECRYPTING
+//    - Other threads spin-wait until state becomes DECRYPTED
+// 2. The thread that wins the race gets exclusive mutable access during decryption
+// 3. After decryption completes (state = DECRYPTED), the buffer is immutable
+// 4. Multiple threads can safely read the stable, decrypted buffer concurrently
 unsafe impl<A: Algorithm, M, const N: usize> Sync for Encrypted<A, M, N>
 where
     A: Sync,

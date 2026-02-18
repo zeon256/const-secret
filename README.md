@@ -231,11 +231,26 @@ cargo run --example debug_drop
 
 ## Thread Safety
 
-`Encrypted` is `Sync` and can be shared across threads:
+`Encrypted` is `Sync` and can be safely shared across threads. The implementation uses a 3-state atomic to coordinate lazy decryption:
 
-- An atomic flag gates the first XOR/decrypt path.
-- After first deref, concurrent reads are safe.
-- Multiple threads can deref the same value concurrently.
+1. **UNENCRYPTED** (0): Initial state - first thread to see this attempts decryption via `compare_exchange`
+2. **DECRYPTING** (1): A thread has won the race and holds exclusive mutable access to decrypt in-place
+3. **DECRYPTED** (2): Decryption complete - all threads can safely read the plaintext
+
+If a thread loses the race, it spin-waits until decryption completes, ensuring no thread can access the buffer while another thread holds a mutable reference. This implementation has been verified with Miri to be free of data races and undefined behavior.
+
+After the first decryption, all subsequent dereferences are fast-path atomic loads.
+
+## Implementation Details
+
+### Why `AtomicU8` instead of an enum?
+
+`no_std` environments don't have `AtomicUsize` or `AtomicEnum`. We use `AtomicU8` with const values because:
+
+- It's the smallest atomic type available in `core::sync::atomic`
+- `AtomicU8::compare_exchange` is available on all platforms that Rust supports
+- Enum discriminants would require `#[repr(u8)]` and extra casting anyway
+- The three states (0, 1, 2) fit perfectly in a single byte
 
 ## Caveats
 
