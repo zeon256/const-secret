@@ -1,0 +1,108 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="A `no_std` crate for compile-time encrypted secrets."><title>const_secret - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../static.files/rustdoc-b7b9f40b.css"><meta name="rustdoc-vars" data-root-path="../" data-static-root-path="../static.files/" data-current-crate="const_secret" data-themes="" data-resource-suffix="" data-rustdoc-version="1.95.0-nightly (873b4beb0 2026-02-15)" data-channel="nightly" data-search-js="search-63369b7b.js" data-stringdex-js="stringdex-b897f86f.js" data-settings-js="settings-170eb4bf.js" ><script src="../static.files/storage-41dd4d93.js"></script><script defer src="../crates.js"></script><script defer src="../static.files/main-5013f961.js"></script><noscript><link rel="stylesheet" href="../static.files/noscript-f7c3ffd8.css"></noscript><link rel="alternate icon" type="image/png" href="../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../static.files/favicon-044be391.svg"></head><body class="rustdoc mod crate"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><rustdoc-topbar><h2><a href="#">Crate const_secret</a></h2></rustdoc-topbar><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../const_secret/index.html">const_<wbr>secret</a><span class="version">0.1.0</span></h2></div><div class="sidebar-elems"><ul class="block"><li><a id="all-types" href="all.html">All Items</a></li></ul><section id="rustdoc-toc"><h3><a href="#">Sections</a></h3><ul class="block top-toc"><li><a href="#features" title="Features">Features</a></li><li><a href="#examples" title="Examples">Examples</a><ul><li><a href="#xor-algorithm" title="XOR Algorithm">XOR Algorithm</a></li><li><a href="#rc4-algorithm" title="RC4 Algorithm">RC4 Algorithm</a></li><li><a href="#usage-modes" title="Usage Modes">Usage Modes</a></li><li><a href="#choosing-an-algorithm" title="Choosing an Algorithm">Choosing an Algorithm</a></li><li><a href="#drop-strategies" title="Drop Strategies">Drop Strategies</a></li></ul></li><li><a href="#architecture" title="Architecture">Architecture</a></li></ul><h3><a href="#modules">Crate Items</a></h3><ul class="block"><li><a href="#modules" title="Modules">Modules</a></li><li><a href="#structs" title="Structs">Structs</a></li><li><a href="#traits" title="Traits">Traits</a></li></ul></section><div id="rustdoc-modnav"></div></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><div class="width-limiter"><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><h1>Crate <span>const_<wbr>secret</span>&nbsp;<button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../src/const_secret/lib.rs.html#1-357">Source</a> </span></div><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>A <code>no_std</code> crate for compile-time encrypted secrets.</p>
+<p>This crate provides encrypted storage for sensitive data that is encrypted at compile time
+and only decrypted at runtime when accessed. This prevents secrets from appearing in
+plaintext in the final binary.</p>
+<h2 id="features"><a class="doc-anchor" href="#features">§</a>Features</h2>
+<ul>
+<li><strong>Compile-time encryption</strong>: Secrets are encrypted during compilation</li>
+<li><strong>Multiple algorithms</strong>: XOR (simple, fast) and RC4 (stream cipher)</li>
+<li><strong>Drop strategies</strong>: Control what happens to decrypted data on drop:
+<ul>
+<li><code>Zeroize</code>: Overwrites memory with zeros</li>
+<li><code>ReEncrypt</code>: Re-encrypts the data</li>
+<li><code>NoOp</code>: Leaves data unchanged</li>
+</ul>
+</li>
+<li><strong>Thread-safe</strong>: <code>Sync</code> implementation allows concurrent access</li>
+<li><code>no_std</code> compatible: Works in embedded environments</li>
+</ul>
+<h2 id="examples"><a class="doc-anchor" href="#examples">§</a>Examples</h2><h3 id="xor-algorithm"><a class="doc-anchor" href="#xor-algorithm">§</a>XOR Algorithm</h3>
+<p>XOR is the simplest and fastest algorithm. It uses a single-byte key:</p>
+
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>const_secret::{
+    Encrypted, StringLiteral,
+    drop_strategy::Zeroize,
+    xor::{ReEncrypt, Xor},
+};
+
+<span class="comment">// Zeroize on drop (safest - clears memory)
+</span><span class="kw">const </span>SECRET_ZEROIZE: Encrypted&lt;Xor&lt;<span class="number">0xAA</span>, Zeroize&gt;, StringLiteral, <span class="number">5</span>&gt; =
+    Encrypted::&lt;Xor&lt;<span class="number">0xAA</span>, Zeroize&gt;, StringLiteral, <span class="number">5</span>&gt;::new(<span class="kw-2">*</span><span class="string">b"hello"</span>);
+
+<span class="comment">// Re-encrypt on drop (good for frequently accessed secrets)
+</span><span class="kw">const </span>SECRET_REENCRYPT: Encrypted&lt;Xor&lt;<span class="number">0xBB</span>, ReEncrypt&lt;<span class="number">0xBB</span>&gt;&gt;, StringLiteral, <span class="number">6</span>&gt; =
+    Encrypted::&lt;Xor&lt;<span class="number">0xBB</span>, ReEncrypt&lt;<span class="number">0xBB</span>&gt;&gt;, StringLiteral, <span class="number">6</span>&gt;::new(<span class="kw-2">*</span><span class="string">b"secret"</span>);
+
+<span class="comment">// No-op on drop (fastest, but leaves data in memory)
+</span><span class="kw">const </span>SECRET_NOOP: Encrypted&lt;Xor&lt;<span class="number">0xCC</span>, Zeroize&gt;, StringLiteral, <span class="number">4</span>&gt; =
+    Encrypted::&lt;Xor&lt;<span class="number">0xCC</span>, Zeroize&gt;, StringLiteral, <span class="number">4</span>&gt;::new(<span class="kw-2">*</span><span class="string">b"test"</span>);</code></pre></div><h3 id="rc4-algorithm"><a class="doc-anchor" href="#rc4-algorithm">§</a>RC4 Algorithm</h3>
+<p>RC4 is a stream cipher with variable-length keys (1-256 bytes).
+<strong>Note:</strong> RC4 is cryptographically broken; use only for basic obfuscation:</p>
+
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>const_secret::{
+    Encrypted, StringLiteral, ByteArray,
+    drop_strategy::Zeroize,
+    rc4::{ReEncrypt, Rc4},
+};
+
+<span class="kw">const </span>KEY: [u8; <span class="number">16</span>] = <span class="kw-2">*</span><span class="string">b"my-secret-key-16"</span>;
+
+<span class="comment">// RC4 with zeroize drop strategy
+</span><span class="kw">const </span>RC4_SECRET: Encrypted&lt;Rc4&lt;<span class="number">16</span>, Zeroize&lt;[u8; <span class="number">16</span>]&gt;&gt;, StringLiteral, <span class="number">6</span>&gt; =
+    Encrypted::&lt;Rc4&lt;<span class="number">16</span>, Zeroize&lt;[u8; <span class="number">16</span>]&gt;&gt;, StringLiteral, <span class="number">6</span>&gt;::new(<span class="kw-2">*</span><span class="string">b"rc4sec"</span>, KEY);
+
+<span class="comment">// RC4 with re-encrypt drop strategy
+</span><span class="kw">const </span>RC4_REENCRYPT: Encrypted&lt;Rc4&lt;<span class="number">16</span>, ReEncrypt&lt;<span class="number">16</span>&gt;&gt;, StringLiteral, <span class="number">8</span>&gt; =
+    Encrypted::&lt;Rc4&lt;<span class="number">16</span>, ReEncrypt&lt;<span class="number">16</span>&gt;&gt;, StringLiteral, <span class="number">8</span>&gt;::new(<span class="kw-2">*</span><span class="string">b"rc4data!"</span>, KEY);</code></pre></div><h3 id="usage-modes"><a class="doc-anchor" href="#usage-modes">§</a>Usage Modes</h3><h4 id="stringliteral-mode"><a class="doc-anchor" href="#stringliteral-mode">§</a><code>StringLiteral</code> Mode</h4>
+<p>For UTF-8 string data. Returns <code>&amp;str</code> on dereference:</p>
+
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>const_secret::{
+    Encrypted, StringLiteral,
+    drop_strategy::Zeroize,
+    xor::Xor,
+};
+
+<span class="kw">const </span>API_KEY: Encrypted&lt;Xor&lt;<span class="number">0xAA</span>, Zeroize&gt;, StringLiteral, <span class="number">34</span>&gt; =
+    Encrypted::&lt;Xor&lt;<span class="number">0xAA</span>, Zeroize&gt;, StringLiteral, <span class="number">34</span>&gt;::new(
+        <span class="kw-2">*</span><span class="string">b"sk-live-1234567890abcdefghijklmnop"
+    </span>);
+
+<span class="kw">fn </span>main() {
+    <span class="kw">let </span>key: <span class="kw-2">&amp;</span>str = <span class="kw-2">&amp;*</span>API_KEY;
+    <span class="macro">assert_eq!</span>(key, <span class="string">"sk-live-1234567890abcdefghijklmnop"</span>);
+}</code></pre></div><h4 id="bytearray-mode"><a class="doc-anchor" href="#bytearray-mode">§</a><code>ByteArray</code> Mode</h4>
+<p>For binary data. Returns <code>&amp;[u8; N]</code> on dereference:</p>
+
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>const_secret::{
+    Encrypted, ByteArray,
+    drop_strategy::Zeroize,
+    xor::Xor,
+};
+
+<span class="kw">const </span>BINARY_SECRET: Encrypted&lt;Xor&lt;<span class="number">0xBB</span>, Zeroize&gt;, ByteArray, <span class="number">16</span>&gt; =
+    Encrypted::&lt;Xor&lt;<span class="number">0xBB</span>, Zeroize&gt;, ByteArray, <span class="number">16</span>&gt;::new([
+        <span class="number">0x01</span>, <span class="number">0x02</span>, <span class="number">0x03</span>, <span class="number">0x04</span>, <span class="number">0x05</span>, <span class="number">0x06</span>, <span class="number">0x07</span>, <span class="number">0x08</span>,
+        <span class="number">0x09</span>, <span class="number">0x0A</span>, <span class="number">0x0B</span>, <span class="number">0x0C</span>, <span class="number">0x0D</span>, <span class="number">0x0E</span>, <span class="number">0x0F</span>, <span class="number">0x10</span>,
+    ]);
+
+<span class="kw">fn </span>main() {
+    <span class="kw">let </span>data: <span class="kw-2">&amp;</span>[u8; <span class="number">16</span>] = <span class="kw-2">&amp;*</span>BINARY_SECRET;
+    <span class="macro">assert_eq!</span>(data[<span class="number">0</span>], <span class="number">0x01</span>);
+}</code></pre></div><h3 id="choosing-an-algorithm"><a class="doc-anchor" href="#choosing-an-algorithm">§</a>Choosing an Algorithm</h3><div><table><thead><tr><th>Algorithm</th><th>Speed</th><th>Security</th><th>Use Case</th></tr></thead><tbody>
+<tr><td>XOR</td><td>Fast</td><td>Basic</td><td>Simple obfuscation, speed critical</td></tr>
+<tr><td>RC4</td><td>Medium</td><td>Broken</td><td>Variable key length, slightly better obfuscation</td></tr>
+</tbody></table>
+</div><h3 id="drop-strategies"><a class="doc-anchor" href="#drop-strategies">§</a>Drop Strategies</h3><div><table><thead><tr><th>Strategy</th><th>Behavior on Drop</th><th>Best For</th></tr></thead><tbody>
+<tr><td><code>Zeroize</code></td><td>Overwrites with zeros</td><td>Maximum security</td></tr>
+<tr><td><code>ReEncrypt</code></td><td>Re-encrypts data</td><td>If you prefer the residue to remain encrypted after using</td></tr>
+<tr><td><code>NoOp</code></td><td>Leaves unchanged</td><td>Performance critical, non-sensitive</td></tr>
+</tbody></table>
+</div><h2 id="architecture"><a class="doc-anchor" href="#architecture">§</a>Architecture</h2>
+<p>The crate uses a type-level architecture:</p>
+<ul>
+<li><a href="trait.Algorithm.html" title="trait const_secret::Algorithm"><code>Algorithm</code></a>: Trait defining encryption algorithm and associated data</li>
+<li><a href="struct.Encrypted.html" title="struct const_secret::Encrypted"><code>Encrypted&lt;A, M, N&gt;</code></a>: Main struct holding encrypted data</li>
+<li><a href="drop_strategy/trait.DropStrategy.html" title="trait const_secret::drop_strategy::DropStrategy"><code>DropStrategy</code></a>: Trait for handling drop behavior</li>
+<li>Mode markers: <a href="struct.StringLiteral.html" title="struct const_secret::StringLiteral"><code>StringLiteral</code></a> and <a href="struct.ByteArray.html" title="struct const_secret::ByteArray"><code>ByteArray</code></a></li>
+</ul>
+</div></details><h2 id="modules" class="section-header">Modules<a href="#modules" class="anchor">§</a></h2><dl class="item-table"><dt><a class="mod" href="align/index.html" title="mod const_secret::align">align</a></dt><dd>Alignment wrapper types for forcing specific memory alignment.</dd><dt><a class="mod" href="drop_strategy/index.html" title="mod const_secret::drop_strategy">drop_<wbr>strategy</a></dt><dd>Drop strategies for handling encrypted data when it goes out of scope.</dd><dt><a class="mod" href="rc4/index.html" title="mod const_secret::rc4">rc4</a></dt><dd>RC4 stream cipher algorithm implementation.</dd><dt><a class="mod" href="xor/index.html" title="mod const_secret::xor">xor</a></dt><dd>XOR encryption algorithm implementation.</dd></dl><h2 id="structs" class="section-header">Structs<a href="#structs" class="anchor">§</a></h2><dl class="item-table"><dt><a class="struct" href="struct.ByteArray.html" title="struct const_secret::ByteArray">Byte<wbr>Array</a></dt><dd>Mode marker type indicating the encrypted data should be treated as a byte array.</dd><dt><a class="struct" href="struct.Encrypted.html" title="struct const_secret::Encrypted">Encrypted</a></dt><dd>An encrypted container that holds data encrypted at compile time.</dd><dt><a class="struct" href="struct.StringLiteral.html" title="struct const_secret::StringLiteral">String<wbr>Literal</a></dt><dd>Mode marker type indicating the encrypted data should be treated as a UTF-8 string literal.</dd></dl><h2 id="traits" class="section-header">Traits<a href="#traits" class="anchor">§</a></h2><dl class="item-table"><dt><a class="trait" href="trait.Algorithm.html" title="trait const_secret::Algorithm">Algorithm</a></dt><dd>A trait that defines an encryption algorithm and its associated types.</dd></dl></section></div></main></body></html>

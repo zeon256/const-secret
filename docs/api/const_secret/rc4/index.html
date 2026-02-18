@@ -1,0 +1,48 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="RC4 stream cipher algorithm implementation."><title>const_secret::rc4 - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../static.files/rustdoc-b7b9f40b.css"><meta name="rustdoc-vars" data-root-path="../../" data-static-root-path="../../static.files/" data-current-crate="const_secret" data-themes="" data-resource-suffix="" data-rustdoc-version="1.95.0-nightly (873b4beb0 2026-02-15)" data-channel="nightly" data-search-js="search-63369b7b.js" data-stringdex-js="stringdex-b897f86f.js" data-settings-js="settings-170eb4bf.js" ><script src="../../static.files/storage-41dd4d93.js"></script><script defer src="../sidebar-items.js"></script><script defer src="../../static.files/main-5013f961.js"></script><noscript><link rel="stylesheet" href="../../static.files/noscript-f7c3ffd8.css"></noscript><link rel="alternate icon" type="image/png" href="../../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../../static.files/favicon-044be391.svg"></head><body class="rustdoc mod"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><rustdoc-topbar><h2><a href="#">Module rc4</a></h2></rustdoc-topbar><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../../const_secret/index.html">const_<wbr>secret</a><span class="version">0.1.0</span></h2></div><div class="sidebar-elems"><section id="rustdoc-toc"><h2 class="location"><a href="#">Module rc4</a></h2><h3><a href="#">Sections</a></h3><ul class="block top-toc"><li><a href="#security-note" title="Security Note">Security Note</a></li><li><a href="#algorithm" title="Algorithm">Algorithm</a></li><li><a href="#types" title="Types">Types</a></li><li><a href="#example" title="Example">Example</a></li></ul><h3><a href="#structs">Module Items</a></h3><ul class="block"><li><a href="#structs" title="Structs">Structs</a></li></ul></section><div id="rustdoc-modnav"><h2 class="in-crate"><a href="../index.html">In crate const_<wbr>secret</a></h2></div></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><div class="width-limiter"><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><div class="rustdoc-breadcrumbs"><a href="../index.html">const_secret</a></div><h1>Module <span>rc4</span>&nbsp;<button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../../src/const_secret/rc4.rs.html#1-554">Source</a> </span></div><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>RC4 stream cipher algorithm implementation.</p>
+<p>This module provides the RC4 (Rivest Cipher 4) stream cipher implementation.
+RC4 is a widely-used stream cipher that uses a variable-length key (1-256 bytes)
+to generate a pseudorandom keystream which is XOR’d with the plaintext.</p>
+<h2 id="security-note"><a class="doc-anchor" href="#security-note">§</a>Security Note</h2>
+<p>RC4 is considered cryptographically broken and should not be used for
+security-sensitive applications. It is provided here for obfuscation purposes
+only. For production use, consider using a modern authenticated encryption
+algorithm.</p>
+<h2 id="algorithm"><a class="doc-anchor" href="#algorithm">§</a>Algorithm</h2>
+<p>RC4 consists of two main phases:</p>
+<ol>
+<li><strong>KSA (Key Scheduling Algorithm)</strong>: Initializes a 256-byte permutation
+table (S-box) based on the key</li>
+<li><strong>PRGA (Pseudo-Random Generation Algorithm)</strong>: Generates keystream bytes
+by permuting the S-box</li>
+</ol>
+<h2 id="types"><a class="doc-anchor" href="#types">§</a>Types</h2>
+<ul>
+<li><a href="struct.Rc4.html" title="struct const_secret::rc4::Rc4"><code>Rc4&lt;KEY_LEN, D&gt;</code></a>: The main algorithm type with const generic key length</li>
+<li><a href="struct.ReEncrypt.html" title="struct const_secret::rc4::ReEncrypt"><code>ReEncrypt&lt;KEY_LEN&gt;</code></a>: A drop strategy that re-encrypts data on drop</li>
+</ul>
+<h2 id="example"><a class="doc-anchor" href="#example">§</a>Example</h2>
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>const_secret::{
+    Encrypted, StringLiteral,
+    drop_strategy::Zeroize,
+    rc4::{ReEncrypt, Rc4},
+};
+
+<span class="kw">const </span>KEY: [u8; <span class="number">5</span>] = <span class="kw-2">*</span><span class="string">b"mykey"</span>;
+
+<span class="comment">// Zeroize on drop (default)
+</span><span class="kw">const </span>SECRET: Encrypted&lt;Rc4&lt;<span class="number">5</span>, Zeroize&lt;[u8; <span class="number">5</span>]&gt;&gt;, StringLiteral, <span class="number">5</span>&gt; =
+    Encrypted::&lt;Rc4&lt;<span class="number">5</span>, Zeroize&lt;[u8; <span class="number">5</span>]&gt;&gt;, StringLiteral, <span class="number">5</span>&gt;::new(<span class="kw-2">*</span><span class="string">b"hello"</span>, KEY);
+
+<span class="comment">// Re-encrypt on drop
+</span><span class="kw">const </span>SECRET2: Encrypted&lt;Rc4&lt;<span class="number">5</span>, ReEncrypt&lt;<span class="number">5</span>&gt;&gt;, StringLiteral, <span class="number">6</span>&gt; =
+    Encrypted::&lt;Rc4&lt;<span class="number">5</span>, ReEncrypt&lt;<span class="number">5</span>&gt;&gt;, StringLiteral, <span class="number">6</span>&gt;::new(<span class="kw-2">*</span><span class="string">b"secret"</span>, KEY);
+
+<span class="kw">fn </span>main() {
+    <span class="kw">let </span>s1: <span class="kw-2">&amp;</span>str = <span class="kw-2">&amp;*</span>SECRET;
+    <span class="macro">assert_eq!</span>(s1, <span class="string">"hello"</span>);
+
+    <span class="kw">let </span>s2: <span class="kw-2">&amp;</span>str = <span class="kw-2">&amp;*</span>SECRET2;
+    <span class="macro">assert_eq!</span>(s2, <span class="string">"secret"</span>);
+}</code></pre></div></div></details><h2 id="structs" class="section-header">Structs<a href="#structs" class="anchor">§</a></h2><dl class="item-table"><dt><a class="struct" href="struct.Rc4.html" title="struct const_secret::rc4::Rc4">Rc4</a></dt><dd>An algorithm that performs RC4 encryption and decryption.
+This algorithm is generic over drop strategy.</dd><dt><a class="struct" href="struct.ReEncrypt.html" title="struct const_secret::rc4::ReEncrypt">ReEncrypt</a></dt><dd>Re-encrypts the buffer using RC4 on drop.
+This ensures the plaintext never remains in memory after the value is dropped.</dd></dl></section></div></main></body></html>
