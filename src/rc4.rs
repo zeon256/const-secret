@@ -60,8 +60,8 @@ use core::{
 };
 
 use crate::{
-    drop_strategy::{DropStrategy, Zeroize},
     Algorithm, ByteArray, Encrypted, StringLiteral,
+    drop_strategy::{DropStrategy, Zeroize},
 };
 
 /// Re-encrypts the buffer using RC4 on drop.
@@ -299,9 +299,9 @@ impl<const KEY_LEN: usize, D: DropStrategy<Extra = [u8; KEY_LEN]>, const N: usiz
 mod tests {
     use super::*;
     use crate::{
+        ByteArray, StringLiteral,
         drop_strategy::{NoOp, Zeroize},
         rc4::Rc4,
-        ByteArray, StringLiteral,
     };
 
     use alloc::vec;
