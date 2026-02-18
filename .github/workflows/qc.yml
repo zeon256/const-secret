@@ -14,7 +14,7 @@ jobs:
       - name: Setup Rust
         uses: ./.github/actions/setup-rust
         with:
-          toolchain: 1.85.1
+          toolchain: 1.93.1
       - name: Format Check
         run: cargo fmt --all -- --check
 
@@ -26,7 +26,7 @@ jobs:
       - name: Setup Rust
         uses: ./.github/actions/setup-rust
         with:
-          toolchain: 1.85.1
+          toolchain: 1.93.1
       - name: Clippy
         run: cargo clippy -- -D warnings
 
@@ -38,7 +38,7 @@ jobs:
       - name: Setup Rust
         uses: ./.github/actions/setup-rust
         with:
-          toolchain: 1.85.1
+          toolchain: 1.93.1
       - name: Test
         run: cargo test
 
@@ -50,7 +50,7 @@ jobs:
       - name: Setup Rust
         uses: ./.github/actions/setup-rust
         with:
-          toolchain: 1.85.1
+          toolchain: 1.93.1
       - name: Build Examples (Release)
         run: cargo build --example debug_drop --release
       - name: Upload Release Binary
@@ -116,7 +116,7 @@ jobs:
       - name: Setup Rust
         uses: ./.github/actions/setup-rust
         with:
-          toolchain: 1.85.1
+          toolchain: 1.93.1
       - name: Install Miri
         run: |
           rustup component add miri
