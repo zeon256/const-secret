@@ -107,3 +107,21 @@ jobs:
           fi
           
           echo "Binary verification complete!"
+
+  miri:
+    name: Miri Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Rust
+        uses: ./.github/actions/setup-rust
+        with:
+          toolchain: 1.85.1
+      - name: Install Miri
+        run: |
+          rustup component add miri
+          cargo miri setup
+      - name: Run Miri Tests
+        run: cargo miri test
+      - name: Run Miri on Examples
+        run: cargo miri run --example debug_drop
