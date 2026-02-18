@@ -2,9 +2,36 @@
 name = "const-secret"
 version = "0.1.0"
 edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "A `no_std` crate for compile-time encrypted secrets."
+repository = "https://github.com/zeon256/const-secret"
+homepage = "https://github.com/zeon256/const-secret"
+keywords = ["const", "secret", "encryption", "compile-time", "no-std"]
+categories = ["data-structures", "no-std"]
 
 [dependencies]
 zeroize = "1.8.2"
 
 [dev-dependencies]
 cargo-husky = { version = "1.5", features = ["precommit-hook", "user-hooks"] }
+criterion = { version = "0.8", features = ["html_reports"] }
+
+[[bench]]
+name = "xor_single_threaded"
+harness = false
+
+[[bench]]
+name = "rc4_single_threaded"
+harness = false
+
+[[bench]]
+name = "concurrent_access"
+harness = false
+
+[[bench]]
+name = "alignment_comparison"
+harness = false
+
+[[bench]]
+name = "drop_strategies"
+harness = false
