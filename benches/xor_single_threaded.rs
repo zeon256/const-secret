@@ -1,10 +1,10 @@
 use const_secret::{
-    align::{Aligned16, Aligned8},
+    ByteArray, Encrypted,
+    align::{Aligned8, Aligned16},
     drop_strategy::NoOp,
     xor::Xor,
-    ByteArray, Encrypted,
 };
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 use std::hint::black_box;
 
 // XOR Single-threaded benchmarks with non-base2 sizes

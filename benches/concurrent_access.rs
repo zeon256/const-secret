@@ -1,5 +1,5 @@
-use const_secret::{drop_strategy::NoOp, rc4::Rc4, xor::Xor, ByteArray, Encrypted};
-use criterion::{criterion_group, criterion_main, Criterion};
+use const_secret::{ByteArray, Encrypted, drop_strategy::NoOp, rc4::Rc4, xor::Xor};
+use criterion::{Criterion, criterion_group, criterion_main};
 use std::{hint::black_box, sync::Arc, thread};
 
 const KEY_16: [u8; 16] = *b"benchmark-key-16";
