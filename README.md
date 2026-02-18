@@ -28,6 +28,14 @@ A lot of the static or const string libraries make use of heavy macros which I d
 - **`no_std` support**: Fully `no_std` compatible (requires only `core`).
 - **StringLiteral and ByteArray modes**: Use `StringLiteral` to deref as `&str`, or `ByteArray` to deref as `&[u8; N]`.
 
+## Installation
+Add this to your `Cargo.toml`:
+
+```toml
+[dependencies]
+const-secret = "1.0.0"
+```
+
 ## Usage
 
 ```rust
