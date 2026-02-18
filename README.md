@@ -252,6 +252,71 @@ After the first decryption, all subsequent dereferences are fast-path atomic loa
 - Enum discriminants would require `#[repr(u8)]` and extra casting anyway
 - The three states (0, 1, 2) fit perfectly in a single byte
 
+## Benchmarks
+
+All benchmarks run on **AMD Ryzen 7 5800X3D @ 3.4-4.0GHz** using Criterion.rs.
+
+### Single-Threaded Performance
+
+| Algorithm | Operation | Size | Time | Throughput |
+|-----------|-----------|------|------|------------|
+| **XOR** | First Decrypt | 7 bytes | 2.07 ns | 3,385 MB/s |
+| **XOR** | First Decrypt | 23 bytes | 4.47 ns | 5,149 MB/s |
+| **XOR** | First Decrypt | 89 bytes | 6.26 ns | 14,213 MB/s |
+| **XOR** | Cached Access | any | 0.47 ns | - |
+| **RC4 (16B key)** | First Decrypt | 7 bytes | 1,160 ns | 6.0 MB/s |
+| **RC4 (16B key)** | First Decrypt | 23 bytes | 1,141 ns | 20.2 MB/s |
+| **RC4 (16B key)** | First Decrypt | 89 bytes | 1,537 ns | 57.9 MB/s |
+| **RC4** | Cached Access | any | 0.23 ns | - |
+
+### Concurrent Access (23 bytes payload)
+
+| Threads | XOR Cold | XOR Hot | RC4 Cold | RC4 Hot |
+|---------|----------|---------|----------|---------|
+| 10 | 131 μs | 130 μs | 128 μs | 129 μs |
+| 20 | 273 μs | - | 271 μs | - |
+| 50 | 938 μs | - | - | - |
+
+### Drop Strategy Overhead (23 bytes payload)
+
+| Strategy | XOR Cost | RC4 Cost |
+|----------|----------|----------|
+| NoOp | 11 ns | 1,145 ns |
+| Zeroize | 14 ns | 1,150 ns |
+| ReEncrypt | 11 ns | 1,625 ns |
+
+### Alignment Impact (XOR, 89 bytes)
+
+| Alignment | Time | vs Unaligned |
+|-----------|------|--------------|
+| Unaligned | 6.19 ns | baseline |
+| Aligned8 | 6.19 ns | 0.0% |
+| Aligned16 | 6.21 ns | +0.3% |
+
+**[View Interactive Reports →](https://zeon256.github.io/const-secret/benchmarks/report/)**
+
+### Running Benchmarks Locally
+
+```bash
+# Run all benchmarks (results in target/criterion/)
+cargo bench
+
+# Run specific benchmark
+cargo bench --bench xor_single_threaded
+
+# Copy results to docs folder for GitHub Pages
+cp -r target/criterion/* docs/benchmarks/
+git add docs/benchmarks && git commit -m "Update benchmarks"
+```
+
+### Updating Published Benchmarks
+
+Benchmarks are published to GitHub Pages automatically on every push to main:
+
+1. Run benchmarks locally: `cargo bench`
+2. Copy results: `cp -r target/criterion/* docs/benchmarks/`
+3. Commit and push: CI will deploy to [GitHub Pages](https://zeon256.github.io/const-secret/)
+
 ## Caveats
 
 - **Not cryptographically secure**: Both XOR and RC4 provide obfuscation, not encryption. RC4 is cryptographically broken. Use this library for compile-time constant storage with defense-in-depth layering, not as a standalone encryption scheme.
